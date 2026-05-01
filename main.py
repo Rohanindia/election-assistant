@@ -349,3 +349,9 @@ async def translate(payload: TranslateRequest):
     except Exception as exc:
         logger.error("Translate error: %s", exc)
         raise HTTPException(status_code=500, detail="Translation failed.")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
