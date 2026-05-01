@@ -724,7 +724,17 @@ function toggleNewsSearch() {
 
 // Google Charts
 google.charts.load('current', {'packages':['corechart','bar']});
-google.charts.setOnLoadCallback(drawCharts);
+google.charts.setOnLoadCallback(function() {
+  if (document.getElementById('voter-chart') && document.getElementById('phase-chart')) {
+    drawCharts();
+  }
+});
+
+window.addEventListener('resize', function() {
+  if (typeof google !== 'undefined' && google.visualization) {
+    drawCharts();
+  }
+});
 
 function drawCharts() {
   // Voter turnout chart
