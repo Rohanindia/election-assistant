@@ -62,7 +62,7 @@ This assistant covers the complete Indian election process interactively:
 
 ## 🔑 Google Services Integration
 
-This assistant uses **2 Google Services**:
+This assistant uses **5 Google Services**:
 
 ### 1. Google Gemini 2.0 Flash API
 - Powers all interactive AI responses about the election process
@@ -76,6 +76,23 @@ This assistant uses **2 Google Services**:
 - Supported: Hindi (hi), Kannada (kn), Tamil (ta), Telugu (te), Malayalam (ml)
 - Makes election process easy-to-follow for non-English speakers
 - Endpoint: `translation.googleapis.com/language/translate/v2`
+
+### 3. Google Analytics GA4
+- Tracks user interactions with the election assistant
+- Custom events: chat_message_sent, quick_topic_clicked, news_search_opened
+- Measures response times and language preferences
+- Helps understand which election topics users ask most
+
+### 4. Google Charts
+- Visual representation of Indian election data
+- Voter Turnout % bar chart (2009–2024)
+- 2024 Election Phases pie chart (7 phases, 545 constituencies)
+- Renders dynamically in sidebar alongside the assistant
+
+### 5. Google News Search
+- One-click access to latest Indian election news
+- Opens Google News filtered for Indian election content
+- Keeps users informed with real-time election updates
 
 ---
 
@@ -118,6 +135,9 @@ FastAPI Backend (Python)
 | **Primary AI** | Google Gemini 2.0 Flash API |
 | **Fallback AI** | Groq Llama 3.1 (8b-instant) |
 | **Translation** | Google Cloud Translation API |
+| **Analytics** | Google Analytics GA4 |
+| **Data Viz** | Google Charts API |
+| **News** | Google News Search |
 | **Backend** | Python 3.11 + FastAPI + Uvicorn |
 | **Frontend** | HTML5, CSS3, Vanilla JS (interactive single-page) |
 | **Templating** | Jinja2 |
