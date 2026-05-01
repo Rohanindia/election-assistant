@@ -415,8 +415,6 @@
     gtag('event', eventName, params);
   }
 </script>
-<!-- Google Charts -->
-<script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
 <!-- Google Custom Search Engine -->
 <script async src="https://cse.google.com/cse.js?cx=partner-pub-election"></script>
 </head>
@@ -505,8 +503,8 @@
     <!-- Google Charts Section -->
     <div style="margin-top:20px; padding:15px; background:rgba(255,255,255,0.05); border-radius:12px;">
       <h3 style="color:#FF9933; font-size:14px; margin-bottom:10px;">📊 India Election Stats</h3>
-      <div id="voter-chart" style="width:100%; height:200px;"></div>
-      <div id="phase-chart" style="width:100%; height:200px; margin-top:10px;"></div>
+      <div id="voter-chart" style="width:100%;height:180px;"></div>
+      <div id="phase-chart" style="width:100%;height:180px;margin-top:8px;"></div>
     </div>
 
   </aside>
@@ -722,65 +720,53 @@ function toggleNewsSearch() {
     }
   }
 
-// Google Charts
-google.charts.load('current', {'packages':['corechart','bar']});
-google.charts.setOnLoadCallback(function() {
-  if (document.getElementById('voter-chart') && document.getElementById('phase-chart')) {
-    drawCharts();
+</script>
+
+<!-- Google Charts -->
+<script type="text/javascript">
+  function loadGoogleCharts() {
+    var script = document.createElement('script');
+    script.src = 'https://www.gstatic.com/charts/loader.js';
+    script.onload = function() {
+      google.charts.load('current', {'packages':['corechart']});
+      google.charts.setOnLoadCallback(drawCharts);
+    };
+    document.head.appendChild(script);
   }
-});
 
-window.addEventListener('resize', function() {
-  if (typeof google !== 'undefined' && google.visualization) {
-    drawCharts();
+  function drawCharts() {
+    // Voter Turnout Chart
+    var t = new google.visualization.DataTable();
+    t.addColumn('string', 'Year');
+    t.addColumn('number', 'Turnout %');
+    t.addRows([['2009',58.2],['2014',66.4],['2019',67.4],['2024',65.8]]);
+    new google.visualization.ColumnChart(
+      document.getElementById('voter-chart')
+    ).draw(t, {
+      title:'Voter Turnout %',
+      backgroundColor:'transparent',
+      titleTextStyle:{color:'#FF9933',fontSize:11},
+      legend:{textStyle:{color:'#333'}},
+      colors:['#FF9933'],
+      chartArea:{width:'80%',height:'65%'}
+    });
+
+    // Phase Chart
+    var p = new google.visualization.DataTable();
+    p.addColumn('string','Phase');
+    p.addColumn('number','Seats');
+    p.addRows([['Ph1',102],['Ph2',89],['Ph3',94],['Ph4',96],['Ph5',49],['Ph6',58],['Ph7',57]]);
+    new google.visualization.PieChart(
+      document.getElementById('phase-chart')
+    ).draw(p, {
+      title:'2024 Phases',
+      backgroundColor:'transparent',
+      titleTextStyle:{color:'#138808',fontSize:11},
+      chartArea:{width:'80%',height:'65%'}
+    });
   }
-});
 
-function drawCharts() {
-  // Voter turnout chart
-  var turnoutData = google.visualization.arrayToDataTable([
-    ['Election Year', 'Voter Turnout %'],
-    ['2009', 58.2],
-    ['2014', 66.4],
-    ['2019', 67.4],
-    ['2024', 65.8]
-  ]);
-  var turnoutOptions = {
-    title: 'Voter Turnout %',
-    backgroundColor: 'transparent',
-    titleTextStyle: { color: '#FF9933', fontSize: 11 },
-    legend: { textStyle: { color: '#ffffff' } },
-    hAxis: { textStyle: { color: '#ffffff' }, gridlines: { color: 'transparent' } },
-    vAxis: { textStyle: { color: '#ffffff' }, gridlines: { color: '#ffffff22' } },
-    colors: ['#FF9933'],
-    chartArea: { width: '80%', height: '65%' }
-  };
-  var turnoutChart = new google.visualization.ColumnChart(document.getElementById('voter-chart'));
-  turnoutChart.draw(turnoutData, turnoutOptions);
-
-  // Election phases chart
-  var phaseData = google.visualization.arrayToDataTable([
-    ['Phase', 'Constituencies'],
-    ['Phase 1', 102],
-    ['Phase 2', 89],
-    ['Phase 3', 94],
-    ['Phase 4', 96],
-    ['Phase 5', 49],
-    ['Phase 6', 58],
-    ['Phase 7', 57]
-  ]);
-  var phaseOptions = {
-    title: '2024 Election Phases',
-    backgroundColor: 'transparent',
-    titleTextStyle: { color: '#138808', fontSize: 11 },
-    legend: { textStyle: { color: '#ffffff' } },
-    pieSliceTextStyle: { color: '#ffffff' },
-    colors: ['#FF9933','#ffffff','#138808','#000080','#FF9933','#138808','#000080'],
-    chartArea: { width: '80%', height: '65%' }
-  };
-  var phaseChart = new google.visualization.PieChart(document.getElementById('phase-chart'));
-  phaseChart.draw(phaseData, phaseOptions);
-}
+  window.addEventListener('load', loadGoogleCharts);
 </script>
 
 </body>
