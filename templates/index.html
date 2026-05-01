@@ -392,9 +392,21 @@
       .sidebar { width: 100%; }
       .chat-panel { min-height: 480px; }
     }
+
+    /* ── Accessibility – Focus styles ── */
+    *:focus {
+      outline: 3px solid #FF9933;
+      outline-offset: 2px;
+    }
+    button:focus, select:focus, textarea:focus {
+      outline: 3px solid #FF9933;
+    }
   </style>
 </head>
 <body>
+
+<a href="#chat-messages" class="skip-link" style="position:absolute;top:-40px;left:0;background:#000080;color:white;padding:8px;z-index:9999;transition:top 0.3s">Skip to main content</a>
+<style>.skip-link:focus{top:0!important}</style>
 
 <header>
   <div class="flag-stripe"></div>
@@ -409,25 +421,25 @@
 
     <div class="sidebar-card">
       <h3>Quick Questions</h3>
-      <button class="quick-chip" onclick="sendQuick('How do I register to vote in India?')">
+      <button class="quick-chip" onclick="sendQuick('How do I register to vote in India?')" aria-label="Ask about voter registration">
         <span class="chip-icon">📋</span>How to register to vote?
       </button>
-      <button class="quick-chip" onclick="sendQuick('What is the step-by-step voting process on election day?')">
+      <button class="quick-chip" onclick="sendQuick('What is the step-by-step voting process on election day?')" aria-label="Ask about voting day steps">
         <span class="chip-icon">🗳️</span>Voting day – step by step
       </button>
-      <button class="quick-chip" onclick="sendQuick('How does an EVM work?')">
+      <button class="quick-chip" onclick="sendQuick('How does an EVM work?')" aria-label="Ask about EVM machines">
         <span class="chip-icon">🖥️</span>How does an EVM work?
       </button>
-      <button class="quick-chip" onclick="sendQuick('What is NOTA and when was it introduced?')">
+      <button class="quick-chip" onclick="sendQuick('What is NOTA and when was it introduced?')" aria-label="Ask about NOTA - None of the Above">
         <span class="chip-icon">🚫</span>What is NOTA?
       </button>
-      <button class="quick-chip" onclick="sendQuick('What is the role of the Election Commission of India?')">
+      <button class="quick-chip" onclick="sendQuick('What is the role of the Election Commission of India?')" aria-label="Ask about the Election Commission of India">
         <span class="chip-icon">🏛️</span>Role of Election Commission
       </button>
-      <button class="quick-chip" onclick="sendQuick('What is the difference between Lok Sabha and Vidhan Sabha elections?')">
+      <button class="quick-chip" onclick="sendQuick('What is the difference between Lok Sabha and Vidhan Sabha elections?')" aria-label="Ask about Lok Sabha vs Vidhan Sabha elections">
         <span class="chip-icon">📜</span>Lok Sabha vs Vidhan Sabha
       </button>
-      <button class="quick-chip" onclick="sendQuick('What is the Model Code of Conduct?')">
+      <button class="quick-chip" onclick="sendQuick('What is the Model Code of Conduct?')" aria-label="Ask about the Model Code of Conduct">
         <span class="chip-icon">⚖️</span>Model Code of Conduct
       </button>
     </div>
@@ -476,7 +488,7 @@
   </aside>
 
   <!-- Chat -->
-  <main class="chat-panel">
+  <main class="chat-panel" role="main" aria-label="VoteGuide AI Election Assistant">
     <div class="chat-header">
       <div class="avatar">🗳️</div>
       <div class="chat-header-info">
@@ -485,7 +497,7 @@
       </div>
       <div class="lang-selector" style="margin-left:auto;display:flex;align-items:center;gap:8px;">
         <span style="font-size:.78rem;color:var(--muted);font-weight:500;">🌐 Translate:</span>
-        <select id="lang-select" style="font-family:'DM Sans',sans-serif;font-size:.82rem;padding:5px 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink);cursor:pointer;outline:none;">
+        <select id="lang-select" aria-label="Select language for translation" style="font-family:'DM Sans',sans-serif;font-size:.82rem;padding:5px 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink);cursor:pointer;outline:none;">
           <option value="en">English</option>
           <option value="hi">हिंदी</option>
           <option value="kn">ಕನ್ನಡ</option>
@@ -496,7 +508,7 @@
       </div>
     </div>
 
-    <div class="chat-messages" id="chat-messages">
+    <div class="chat-messages" id="chat-messages" role="log" aria-live="polite" aria-label="Chat messages">
       <div class="welcome-msg">
         <div class="big-icon">🇮🇳</div>
         <h3>Namaste! I'm VoteGuide AI</h3>
@@ -506,7 +518,7 @@
     </div>
 
     <div class="chat-input-area">
-      <textarea id="user-input" rows="1" placeholder="Ask about voter registration, EVMs, NOTA…" maxlength="1000"></textarea>
+      <textarea id="user-input" rows="1" placeholder="Ask about voter registration, EVMs, NOTA…" maxlength="1000" aria-label="Type your election question here" aria-required="true"></textarea>
       <button id="send-btn" onclick="sendMessage()" aria-label="Send message">
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
           <path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/>
@@ -573,6 +585,8 @@
 
     const bubble = document.createElement('div');
     bubble.className = 'typing-bubble';
+    bubble.setAttribute('aria-label', 'Assistant is typing');
+    bubble.setAttribute('aria-live', 'polite');
     bubble.innerHTML = '<span></span><span></span><span></span>';
 
     wrap.appendChild(av);

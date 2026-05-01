@@ -1,14 +1,18 @@
 """
 India Election Assistant - FastAPI Backend
-AI-powered assistant using Google Gemini API + Google Translate API
+AI-powered assistant using Google Gemini API + Google Cloud Translation API
 Fallback: Groq (Llama3) when Gemini quota is exceeded
 Challenge 2: Election Process Assistant
 """
 
 import os
+import re
+import time
 import logging
 import httpx
+from collections import defaultdict
 from fastapi import FastAPI, HTTPException, Request
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
@@ -73,6 +77,49 @@ app = FastAPI(
     description="AI-powered assistant to help users understand Indian elections",
     version="1.0.0",
 )
+
+# ── Security Headers Middleware ────────────────────────────────────────────────
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self' 'unsafe-inline' fonts.googleapis.com fonts.gstatic.com"
+        )
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+# ── Rate Limiting ──────────────────────────────────────────────────────────────
+request_counts: dict = defaultdict(list)
+
+def check_rate_limit(ip: str, max_requests: int = 30, window: int = 60) -> bool:
+    now = time.time()
+    request_counts[ip] = [t for t in request_counts[ip] if now - t < window]
+    if len(request_counts[ip]) >= max_requests:
+        return False
+    request_counts[ip].append(now)
+    return True
+
+# ── Input Sanitization ─────────────────────────────────────────────────────────
+def sanitize_input(text: str) -> str:
+    text = re.sub(r'<[^>]+>', '', text)
+    text = re.sub(r'[<>"\'|]', '', text)
+    return text.strip()
+
+# ── Startup Validation ─────────────────────────────────────────────────────────
+@app.on_event("startup")
+async def startup_event():
+    if not os.getenv("GEMINI_API_KEY"):
+        logger.warning("GEMINI_API_KEY not set - will use fallback")
+    if not os.getenv("TRANSLATE_API_KEY"):
+        logger.warning("TRANSLATE_API_KEY not set - translation disabled")
+    if not os.getenv("GROQ_API_KEY"):
+        logger.warning("GROQ_API_KEY not set - Groq fallback disabled")
+    logger.info("VoteGuide AI started successfully")
 
 app.add_middleware(
     CORSMiddleware,
@@ -232,12 +279,17 @@ async def health():
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(payload: ChatRequest):
+async def chat(request: Request, payload: ChatRequest):
     """
     1. Try Gemini first
     2. If Gemini quota exceeded → fallback to Groq
     3. If both fail → keyword fallback
     """
+    # ── Rate limiting & sanitization ───────────────────────────────────────────
+    client_ip = request.client.host
+    if not check_rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait 1 minute.")
+    payload.message = sanitize_input(payload.message)
     # ── Try Gemini ─────────────────────────────────────────────────────────────
     if GEMINI_API_KEY:
         try:

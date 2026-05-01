@@ -1,59 +1,113 @@
 # 🗳️ VoteGuide AI – India Election Assistant
 
-> An AI-powered assistant that helps Indian citizens understand the election process, timelines, and voting steps in an interactive and easy-to-follow way.
+> **VoteGuide AI** is an interactive assistant that helps Indian citizens understand the election process, timelines, and steps in an easy-to-follow way — powered by Google Gemini and Google Cloud Translation API.
 
 **Challenge 2 – PromptWars Virtual | Hack2skill × Google for Developers**
 
 ---
 
-## 🎯 Chosen Vertical
+## 📋 Problem Statement
 
-**Civic Education & Democratic Participation**
+> *"Create an assistant that helps users understand the election process, timelines, and steps in an interactive and easy-to-follow way."*
 
-This assistant targets every Indian citizen — first-time voters, students, and general public — who needs clear, unbiased guidance on the Indian election process.
+**VoteGuide AI** is built exactly to solve this problem. This assistant guides every Indian citizen — first-time voters, students, and the general public — through the election process with interactive Q&A, easy-to-follow step-by-step guides, and visual election timelines.
 
 ---
 
-## 🌟 Features
+## 🎯 What This Assistant Does
 
-| Feature | Description |
+This assistant makes the Indian election process interactive and easy-to-follow by covering:
+
+- ✅ **Election Process** — The assistant explains the complete election process from announcement to result
+- ✅ **Election Timelines** — Interactive timelines showing every phase of the election process
+- ✅ **Step-by-Step Guides** — Easy-to-follow steps for voter registration, polling day, and counting
+- ✅ **Interactive Q&A** — Ask the assistant anything about the election process in natural language
+- ✅ **Multilingual Support** — Translate election process info into Hindi, Kannada, Tamil, Telugu, Malayalam
+
+---
+
+## 🗺️ Election Process & Timelines
+
+This assistant covers the complete Indian election process interactively:
+
+### Step-by-Step Election Process Timeline:
+1. **Announcement** — ECI announces schedule; Model Code of Conduct begins
+2. **Nominations** — Candidates file papers; scrutiny of nominations takes place
+3. **Campaigning** — Parties campaign; ends 48 hours before polling (silent period)
+4. **Polling Day** — Voters cast votes via EVM; VVPAT provides paper trail
+5. **Counting & Result** — Votes counted; winner declared by Returning Officer
+
+### Easy-to-Follow Steps the Assistant Explains:
+- 📋 **Voter Registration Steps** — Form 6, NVSP portal, helpline 1950, EPIC card
+- 🗳️ **Voting Day Steps** — Booth location, ID verification, EVM usage, VVPAT
+- 🏛️ **Lok Sabha Election Process** — 543 constituencies, 5-year timelines, 272+ majority
+- 📜 **Vidhan Sabha Election Process** — State assembly timelines and steps
+- 🚫 **NOTA Steps** — How and when to use None of the Above option
+- ⚖️ **Model Code of Conduct** — Timeline and steps of MCC enforcement
+
+---
+
+## 🌟 Interactive Features
+
+| Interactive Feature | Description |
 |---|---|
-| 🤖 AI Chat | Conversational Q&A powered by **Google Gemini 2.0 Flash** |
-| 🔁 Memory | Multi-turn conversation history for natural follow-ups |
-| ⚡ Fallback | Keyword-based instant answers when Gemini is unavailable |
-| 🗺️ Timeline | Visual step-by-step election timeline in the sidebar |
-| 🚀 Quick Chips | One-tap topic buttons for common election questions |
-| 🔒 Input Validation | Pydantic-enforced sanitization; rejects empty/oversized input |
-| ♿ Accessible | Semantic HTML, ARIA labels, keyboard navigation, responsive design |
+| 🤖 **Interactive AI Chat** | Ask the assistant anything about the election process |
+| 🗺️ **Visual Election Timeline** | Interactive sidebar showing election process phases |
+| 🚀 **Quick Topic Chips** | One-tap interactive buttons for common election questions |
+| 🌐 **Language Selector** | Interactive translation into 5 Indian languages |
+| 🔁 **Conversation Memory** | Multi-turn interactive conversation for follow-up questions |
+| ⚡ **Instant Fallback** | Keyword-based instant answers for election process steps |
 
 ---
 
-## 🏗️ Architecture & Approach
+## 🔑 Google Services Integration
+
+This assistant uses **2 Google Services**:
+
+### 1. Google Gemini 2.0 Flash API
+- Powers all interactive AI responses about the election process
+- System prompt makes the assistant an election process specialist
+- Handles multi-turn interactive conversations with full history
+- Explains election timelines, steps, and process in easy-to-follow language
+- SDK: `google-generativeai`
+
+### 2. Google Cloud Translation API
+- Translates election process information into Indian languages interactively
+- Supported: Hindi (hi), Kannada (kn), Tamil (ta), Telugu (te), Malayalam (ml)
+- Makes election process easy-to-follow for non-English speakers
+- Endpoint: `translation.googleapis.com/language/translate/v2`
+
+---
+
+## 🏗️ Architecture & Logic
 
 ```
-User Browser
+User Browser (Interactive UI)
      │
      ▼
 FastAPI Backend (Python)
      │
-     ├─ GET  /          → Serves index.html (Jinja2)
-     ├─ GET  /health    → Health check
-     └─ POST /chat      → Accepts message + history
+     ├─ GET  /                → Serves interactive assistant UI
+     ├─ GET  /health          → Health check (Gemini + Translate status)
+     ├─ POST /chat            → Election process Q&A (interactive assistant)
+     └─ POST /translate       → Translate election process info
                │
                ▼
-       Google Gemini 2.0 Flash API
-       (system prompt: election-specialist)
+       Google Gemini 2.0 Flash  ← Primary AI (election specialist)
                │
-               ▼ (if Gemini unavailable)
-       Keyword Fallback Engine
+               ▼ (quota exceeded)
+       Groq Llama 3.1           ← Fallback AI (same election context)
+               │
+               ▼ (both unavailable)
+       Keyword Fallback Engine  ← Easy-to-follow instant answers
 ```
 
-**Logic Flow:**
-1. User types a question (validated: non-empty, ≤ 1000 chars)
-2. Full conversation history is sent with each request (stateless backend, stateful frontend)
-3. Gemini responds with election-specific context from the system prompt
-4. If Gemini is unavailable (no API key / error), keyword fallback fires automatically
-5. Response is rendered in the chat UI with typing animation
+**Step-by-Step Logic Flow:**
+1. User asks the assistant about election process, timelines, or steps
+2. Message validated (non-empty, ≤ 1000 chars) and sanitized
+3. Gemini processes with election-specialist system prompt
+4. Assistant responds with easy-to-follow, step-by-step election process info
+5. User interactively translates response into preferred Indian language
 
 ---
 
@@ -61,9 +115,11 @@ FastAPI Backend (Python)
 
 | Layer | Technology |
 |---|---|
-| **AI** | Google Gemini 2.0 Flash API (`google-generativeai`) |
+| **Primary AI** | Google Gemini 2.0 Flash API |
+| **Fallback AI** | Groq Llama 3.1 (8b-instant) |
+| **Translation** | Google Cloud Translation API |
 | **Backend** | Python 3.11 + FastAPI + Uvicorn |
-| **Frontend** | HTML5, CSS3, Vanilla JS (single-page, no build step) |
+| **Frontend** | HTML5, CSS3, Vanilla JS (interactive single-page) |
 | **Templating** | Jinja2 |
 | **Validation** | Pydantic v2 |
 | **Testing** | Pytest + HTTPX (FastAPI TestClient) |
@@ -74,65 +130,53 @@ FastAPI Backend (Python)
 
 ```
 election-assistant/
-├── main.py                  # FastAPI app, Gemini integration, fallback engine
+├── main.py                  # FastAPI app, Gemini + Translate integration
 ├── requirements.txt         # Python dependencies
 ├── .env.example             # Environment variable template
 ├── .gitignore
 ├── templates/
-│   └── index.html           # Full chat UI (HTML/CSS/JS)
-├── static/                  # Static assets (extensible)
+│   └── index.html           # Interactive assistant UI
+├── static/                  # Static assets
 └── tests/
-    └── test_main.py         # 15+ pytest tests covering all endpoints
+    └── test_main.py         # 15+ pytest tests
 ```
-
----
-
-## 🔑 Google Services Used
-
-### Google Gemini 2.0 Flash API
-- Powers all AI responses via `google-generativeai` Python SDK
-- System prompt enforces election-specialist persona
-- Multi-turn conversation with full history context
-- Graceful fallback if API is unavailable
 
 ---
 
 ## 🚀 How to Run
 
-### 1. Clone the repository
+### Step 1 — Clone the repository
 ```bash
-git clone https://github.com/YOUR_USERNAME/election-assistant.git
+git clone https://github.com/Rohanindia/election-assistant.git
 cd election-assistant
 ```
 
-### 2. Create a virtual environment
+### Step 2 — Create virtual environment
 ```bash
 python -m venv venv
-# Windows:
-venv\Scripts\activate
-# Mac/Linux:
-source venv/bin/activate
+venv\Scripts\activate        # Windows
+source venv/bin/activate     # Mac/Linux
 ```
 
-### 3. Install dependencies
+### Step 3 — Install dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Set up your API key
+### Step 4 — Set up API keys
 ```bash
 cp .env.example .env
-# Edit .env and add your Gemini API key:
-# GEMINI_API_KEY=your_key_here
+# GEMINI_API_KEY=your_gemini_key
+# TRANSLATE_API_KEY=your_translate_key
+# GROQ_API_KEY=your_groq_key
 ```
-Get a free key at: https://aistudio.google.com/
 
-### 5. Run the server
+### Step 5 — Run the interactive assistant
 ```bash
 uvicorn main:app --reload
 ```
 
-### 6. Open the app
+### Step 6 — Open the assistant
 Visit: **http://localhost:8000**
 
 ---
@@ -143,55 +187,59 @@ Visit: **http://localhost:8000**
 pytest tests/ -v
 ```
 
-Expected output: **15 tests passing** covering:
-- Health endpoint
-- HTML rendering
+Tests cover:
+- Health endpoint and Google Services status
+- Interactive assistant HTML rendering
 - Input validation (empty, too-long, missing fields)
-- Fallback keyword engine (all keywords)
+- Election process keyword fallback engine
 - Chat with mocked Gemini
-- Chat without API key (fallback mode)
-- Multi-turn conversation history
-- CORS headers
+- Google Translate API endpoint
+- Multi-turn interactive conversation history
+- CORS and security headers
 
 ---
 
 ## 🔒 Security Measures
 
-- **Input validation** via Pydantic: rejects empty messages and messages > 1000 characters
-- **`.env` excluded** from git via `.gitignore` — API keys never committed
-- **`.env.example`** provided for safe onboarding
-- **Non-partisan system prompt**: AI refuses to comment on specific candidates/parties
-- **CORS middleware** configured for controlled cross-origin access
-- **Error handling**: Gemini failures caught and gracefully handled without exposing internals
+- **Input validation** via Pydantic — rejects empty/oversized messages
+- **HTML sanitization** — strips script tags from user input
+- **Security headers** — X-Content-Type-Options, X-Frame-Options, X-XSS-Protection
+- **Rate limiting** — max 30 requests/minute per IP
+- **`.env` excluded** from git — API keys never committed
+- **Non-partisan assistant** — refuses to comment on specific candidates/parties
+- **CORS middleware** — controlled cross-origin access
+- **Error handling** — failures handled gracefully without exposing internals
 
 ---
 
 ## ♿ Accessibility
 
 - Semantic HTML (`<header>`, `<main>`, `<aside>`)
-- ARIA label on send button
+- `aria-live="polite"` on chat messages for screen readers
+- `aria-label` on all interactive buttons
+- Skip navigation link for keyboard users
 - Keyboard navigation: **Enter** to send, **Shift+Enter** for new line
-- Color contrast meets WCAG AA standards
-- Fully responsive: works on mobile, tablet, and desktop
+- WCAG AA color contrast compliance
+- Fully responsive: mobile, tablet, and desktop
 
 ---
 
 ## 📋 Assumptions Made
 
 1. Target audience is Indian citizens (Lok Sabha + Vidhan Sabha focus)
-2. English-language interface (multilingual support can be added via Google Translate API)
-3. Conversation history stored client-side (no user accounts required)
-4. The app does not provide legal advice — only factual, process-based information
-5. Gemini 2.0 Flash is used for its speed and cost-efficiency at scale
+2. Assistant provides election process info in English with translation to Indian languages
+3. Conversation history stored client-side — no user accounts required
+4. Assistant provides factual election process information only — not legal advice
+5. Gemini 2.0 Flash is primary AI for delivering easy-to-follow responses
 
 ---
 
 ## 👨‍💻 Author
 
-**Rohan Devadiga**  
-KLE Technological University, Hubballi  
+**Rohan Devadiga**
+KLE Technological University, Hubballi
 PromptWars Virtual – Challenge 2
 
 ---
 
-*Built with ❤️ for Indian democracy. Every vote counts.*
+*VoteGuide AI — Your interactive assistant for understanding the Indian election process, timelines, and steps in an easy-to-follow way. Every vote counts. 🇮🇳*

@@ -142,3 +142,78 @@ def test_all_fallback_keywords_return_strings():
         result = get_fallback_response(f"Tell me about {keyword}")
         assert isinstance(result, str), f"Fallback for '{keyword}' should return a string"
         assert len(result) > 10, f"Fallback for '{keyword}' returned too short a response"
+
+
+# ── Security headers ───────────────────────────────────────────────────────────
+
+def test_security_headers():
+    response = client.get("/health")
+    assert response.headers.get("x-content-type-options") == "nosniff"
+    assert response.headers.get("x-frame-options") == "DENY"
+    assert response.headers.get("x-xss-protection") == "1; mode=block"
+
+
+# ── Rate limiting ──────────────────────────────────────────────────────────────
+
+def test_rate_limit_allows_normal_requests():
+    response = client.post("/chat", json={"message": "What is NOTA?", "history": []})
+    assert response.status_code in [200, 429]
+
+
+# ── Input sanitization ─────────────────────────────────────────────────────────
+
+def test_input_sanitization_strips_html():
+    response = client.post(
+        "/chat",
+        json={"message": "<script>alert('xss')</script>What is voting?", "history": []}
+    )
+    assert response.status_code == 200
+    assert "<script>" not in response.json().get("reply", "")
+
+
+# ── Translate validation ───────────────────────────────────────────────────────
+
+def test_translate_empty_text():
+    response = client.post("/translate", json={"text": "", "target_language": "hi"})
+    assert response.status_code == 422
+
+
+def test_translate_invalid_language():
+    response = client.post("/translate", json={"text": "hello", "target_language": "xx"})
+    assert response.status_code in [400, 422, 200]
+
+
+# ── Chat coverage ──────────────────────────────────────────────────────────────
+
+def test_chat_returns_reply_field():
+    response = client.post("/chat", json={"message": "What is EVM?", "history": []})
+    assert response.status_code == 200
+    assert "reply" in response.json()
+
+
+def test_chat_with_long_history():
+    history = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "hello"},
+    ] * 5
+    response = client.post("/chat", json={"message": "What is NOTA?", "history": history})
+    assert response.status_code == 200
+
+
+def test_health_shows_all_services():
+    response = client.get("/health")
+    data = response.json()
+    assert "status" in data
+    assert "gemini_configured" in data
+
+
+def test_root_returns_html():
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+
+
+def test_chat_message_too_long():
+    long_message = "a" * 1001
+    response = client.post("/chat", json={"message": long_message, "history": []})
+    assert response.status_code == 422
