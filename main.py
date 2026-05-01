@@ -1,11 +1,13 @@
 """
 India Election Assistant - FastAPI Backend
-AI-powered assistant using Google Gemini API
+AI-powered assistant using Google Gemini API + Google Translate API
+Fallback: Groq (Llama3) when Gemini quota is exceeded
 Challenge 2: Election Process Assistant
 """
 
 import os
 import logging
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -13,28 +15,39 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, field_validator
 import google.generativeai as genai
+from groq import Groq
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(levelname)s │ %(message)s")
 logger = logging.getLogger(__name__)
 
 # ── Gemini setup ───────────────────────────────────────────────────────────────
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 if not GEMINI_API_KEY:
-    logger.warning("GEMINI_API_KEY not set – AI responses will be unavailable.")
+    logger.warning("GEMINI_API_KEY not set.")
 else:
     genai.configure(api_key=GEMINI_API_KEY)
 
+# ── Groq setup ─────────────────────────────────────────────────────────────────
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+if not GROQ_API_KEY:
+    logger.warning("GROQ_API_KEY not set.")
+
+# ── Translate setup ────────────────────────────────────────────────────────────
+TRANSLATE_API_KEY = os.getenv("TRANSLATE_API_KEY", "")
+TRANSLATE_URL = "https://translation.googleapis.com/language/translate/v2"
+if not TRANSLATE_API_KEY:
+    logger.warning("TRANSLATE_API_KEY not set.")
+
 SYSTEM_PROMPT = """You are VoteGuide AI, a friendly and knowledgeable assistant that helps Indian citizens 
 understand the election process. You assist users with:
-
-- Voter registration (how to register, Form 6, NVSP portal, helpline 1950)
-- Voting eligibility criteria (age 18+, citizenship, etc.)
-- Types of elections: Lok Sabha (General), Rajya Sabha, Vidhan Sabha (State), Local Body
-- How EVMs (Electronic Voting Machines) and VVPATs work
+- Voter registration (Form 6, NVSP portal, helpline 1950)
+- Voting eligibility criteria (age 18+, citizenship)
+- Types of elections: Lok Sabha, Rajya Sabha, Vidhan Sabha, Local Body
+- How EVMs and VVPATs work
 - The role of the Election Commission of India (ECI)
 - Model Code of Conduct (MCC)
 - NOTA (None of the Above) option
@@ -47,12 +60,11 @@ Rules:
 - Keep answers clear, concise, and factual
 - Use simple English; avoid jargon
 - Be neutral and non-partisan at all times
-- If asked about a specific candidate or party, politely decline and redirect to process-based info
+- If asked about a specific candidate or party, politely decline
 - Format answers with bullet points or numbered steps when appropriate
 - Always encourage civic participation
 
-If a question is unrelated to Indian elections, politely say: 
-"I'm specialized in Indian elections. For other topics, please consult a general assistant."
+If unrelated to Indian elections, say: "I'm specialized in Indian elections. For other topics, please consult a general assistant."
 """
 
 # ── App ────────────────────────────────────────────────────────────────────────
@@ -75,7 +87,7 @@ templates = Jinja2Templates(directory="templates")
 
 # ── Models ─────────────────────────────────────────────────────────────────────
 class ChatMessage(BaseModel):
-    role: str       # "user" or "model"
+    role: str
     content: str
 
 class ChatRequest(BaseModel):
@@ -92,45 +104,71 @@ class ChatRequest(BaseModel):
             raise ValueError("Message too long (max 1000 characters).")
         return v
 
+class TranslateRequest(BaseModel):
+    text: str
+    target_language: str
+
+    @field_validator("target_language")
+    @classmethod
+    def valid_language(cls, v: str) -> str:
+        allowed = {"en", "hi", "kn", "ta", "te", "ml"}
+        if v not in allowed:
+            raise ValueError(f"Language must be one of {allowed}")
+        return v
+
+    @field_validator("text")
+    @classmethod
+    def text_not_empty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Text cannot be empty.")
+        if len(v) > 5000:
+            raise ValueError("Text too long (max 5000 characters).")
+        return v
 
 class ChatResponse(BaseModel):
     reply: str
-    source: str  # "gemini" | "fallback"
+    source: str
+
+class TranslateResponse(BaseModel):
+    translated_text: str
+    source_language: str
+    target_language: str
 
 
 # ── Fallback keyword responses ─────────────────────────────────────────────────
 FALLBACK_RESPONSES: dict[str, str] = {
     "register": (
-        "📋 **How to Register as a Voter:**\n"
+        "📋 How to Register as a Voter:\n"
         "1. Visit voters.eci.gov.in or the Voter Helpline App\n"
         "2. Fill Form 6 (new registration)\n"
         "3. Submit proof of age, address, and identity\n"
         "4. Your EPIC (Voter ID) card will be issued within 30 days\n"
-        "5. Helpline: **1950**"
+        "5. Helpline: 1950"
     ),
     "evm": (
-        "🖥️ **Electronic Voting Machines (EVMs):**\n"
+        "🖥️ Electronic Voting Machines (EVMs):\n"
         "- EVMs replaced paper ballots to make voting faster and tamper-resistant\n"
         "- Each EVM has a Ballot Unit and Control Unit\n"
-        "- VVPAT (Voter Verifiable Paper Audit Trail) prints a slip so you can verify your vote\n"
-        "- EVMs are standalone – not connected to the internet"
+        "- VVPAT prints a slip so you can verify your vote\n"
+        "- EVMs are standalone and not connected to the internet"
     ),
     "eligible": (
-        "✅ **Voter Eligibility in India:**\n"
+        "✅ Voter Eligibility in India:\n"
         "- Must be a citizen of India\n"
         "- Must be 18 years or older on the qualifying date\n"
         "- Must be ordinarily resident in the constituency\n"
         "- Must not be disqualified under the Representation of the People Act"
     ),
     "nota": (
-        "🚫 **NOTA – None of the Above:**\n"
+        "🚫 NOTA - None of the Above:\n"
         "- Introduced by the Supreme Court in 2013\n"
         "- Appears as the last option on the EVM ballot\n"
         "- Lets voters express disapproval of all candidates\n"
         "- NOTA votes are counted but do not affect the election result"
     ),
     "lok sabha": (
-        "🏛️ **Lok Sabha (House of the People):**\n"
+        "🏛️ Lok Sabha (House of the People):\n"
         "- Lower house of India's Parliament\n"
         "- 543 directly elected constituencies\n"
         "- Elections held every 5 years\n"
@@ -138,13 +176,13 @@ FALLBACK_RESPONSES: dict[str, str] = {
         "- The party/alliance with 272+ seats forms the government"
     ),
     "voting day": (
-        "🗳️ **What Happens on Voting Day:**\n"
+        "🗳️ What Happens on Voting Day:\n"
         "1. Carry your Voter ID or any valid photo ID\n"
-        "2. Go to your assigned polling booth (find it at electoralsearch.eci.gov.in)\n"
+        "2. Go to your assigned polling booth\n"
         "3. Queue up and wait for your turn\n"
-        "4. An officer will verify your identity and apply indelible ink on your finger\n"
+        "4. Officer verifies identity and applies indelible ink\n"
         "5. Press the button next to your chosen candidate on the EVM\n"
-        "6. Verify on the VVPAT screen – done!"
+        "6. Verify on the VVPAT screen - done!"
     ),
 }
 
@@ -157,8 +195,24 @@ def get_fallback_response(message: str) -> str:
     return (
         "I can help you with voter registration, EVM usage, election timelines, "
         "NOTA, Lok Sabha / Vidhan Sabha elections, and more.\n\n"
-        "Try asking: *'How do I register to vote?'* or *'What is NOTA?'*"
+        "Try asking: 'How do I register to vote?' or 'What is NOTA?'"
     )
+
+
+def get_groq_response(message: str, history: list[ChatMessage]) -> str:
+    """Use Groq (Llama3) as fallback when Gemini is unavailable."""
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for msg in history[-10:]:  # last 10 turns
+        messages.append({"role": msg.role if msg.role == "user" else "assistant", "content": msg.content})
+    messages.append({"role": "user", "content": message})
+
+    response = groq_client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=messages,
+        max_tokens=1024,
+        temperature=0.7,
+    )
+    return response.choices[0].message.content.strip()
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
@@ -169,37 +223,77 @@ async def index(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "gemini_configured": bool(GEMINI_API_KEY)}
+    return {
+        "status": "ok",
+        "gemini_configured": bool(GEMINI_API_KEY),
+        "groq_configured": bool(GROQ_API_KEY),
+        "translate_configured": bool(TRANSLATE_API_KEY),
+    }
 
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(payload: ChatRequest):
     """
-    Accept a user message + conversation history,
-    return an AI response from Gemini (or fallback).
+    1. Try Gemini first
+    2. If Gemini quota exceeded → fallback to Groq
+    3. If both fail → keyword fallback
     """
-    if not GEMINI_API_KEY:
-        return ChatResponse(reply=get_fallback_response(payload.message), source="fallback")
+    # ── Try Gemini ─────────────────────────────────────────────────────────────
+    if GEMINI_API_KEY:
+        try:
+            model = genai.GenerativeModel(
+                model_name="gemini-2.0-flash",
+                system_instruction=SYSTEM_PROMPT,
+            )
+            history = [
+                {"role": msg.role, "parts": [msg.content]}
+                for msg in payload.history
+            ]
+            chat_session = model.start_chat(history=history)
+            response = chat_session.send_message(payload.message)
+            reply = response.text.strip()
+            logger.info("Gemini responded successfully.")
+            return ChatResponse(reply=reply, source="gemini")
+        except Exception as exc:
+            logger.warning("Gemini failed: %s — trying Groq.", exc)
 
+    # ── Try Groq fallback ──────────────────────────────────────────────────────
+    if groq_client:
+        try:
+            reply = get_groq_response(payload.message, payload.history)
+            logger.info("Groq responded successfully.")
+            return ChatResponse(reply=reply, source="groq")
+        except Exception as exc:
+            logger.error("Groq failed: %s — using keyword fallback.", exc)
+
+    # ── Keyword fallback ───────────────────────────────────────────────────────
+    return ChatResponse(reply=get_fallback_response(payload.message), source="fallback")
+
+
+@app.post("/translate", response_model=TranslateResponse)
+async def translate(payload: TranslateRequest):
+    """Translate text using Google Cloud Translation API."""
+    if not TRANSLATE_API_KEY:
+        raise HTTPException(status_code=503, detail="Translation service not configured.")
     try:
-        model = genai.GenerativeModel(
-            model_name="gemini-2.0-flash",
-            system_instruction=SYSTEM_PROMPT,
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                TRANSLATE_URL,
+                params={"key": TRANSLATE_API_KEY},
+                json={"q": payload.text, "target": payload.target_language, "format": "text"},
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            data = response.json()
+        translation = data["data"]["translations"][0]
+        translated_text = translation["translatedText"]
+        source_lang = translation.get("detectedSourceLanguage", "en")
+        logger.info("Translated to %s successfully.", payload.target_language)
+        return TranslateResponse(
+            translated_text=translated_text,
+            source_language=source_lang,
+            target_language=payload.target_language,
         )
-
-        # Build history in Gemini format
-        history = [
-            {"role": msg.role, "parts": [msg.content]}
-            for msg in payload.history
-        ]
-
-        chat_session = model.start_chat(history=history)
-        response = chat_session.send_message(payload.message)
-        reply = response.text.strip()
-
-        logger.info("Gemini responded successfully.")
-        return ChatResponse(reply=reply, source="gemini")
-
     except Exception as exc:
-        logger.error("Gemini error: %s", exc)
-        return ChatResponse(reply=get_fallback_response(payload.message), source="fallback")
+        logger.error("Translate error: %s", exc)
+        raise HTTPException(status_code=500, detail="Translation failed.")

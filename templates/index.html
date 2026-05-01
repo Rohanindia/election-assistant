@@ -483,6 +483,17 @@
         <h2>VoteGuide AI</h2>
         <span class="status-dot">Online – ready to help</span>
       </div>
+      <div class="lang-selector" style="margin-left:auto;display:flex;align-items:center;gap:8px;">
+        <span style="font-size:.78rem;color:var(--muted);font-weight:500;">🌐 Translate:</span>
+        <select id="lang-select" style="font-family:'DM Sans',sans-serif;font-size:.82rem;padding:5px 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink);cursor:pointer;outline:none;">
+          <option value="en">English</option>
+          <option value="hi">हिंदी</option>
+          <option value="kn">ಕನ್ನಡ</option>
+          <option value="ta">தமிழ்</option>
+          <option value="te">తెలుగు</option>
+          <option value="ml">മലയാളം</option>
+        </select>
+      </div>
     </div>
 
     <div class="chat-messages" id="chat-messages">
@@ -574,6 +585,36 @@
     const t = document.getElementById('typing-indicator');
     if (t) t.remove();
   }
+
+  // ── Translate last bot message when language changes ──
+  document.getElementById('lang-select').addEventListener('change', async function() {
+    const lang = this.value;
+    const botBubbles = messages.querySelectorAll('.msg.bot .msg-bubble');
+    if (!botBubbles.length) return;
+    const lastBubble = botBubbles[botBubbles.length - 1];
+    const originalText = lastBubble.dataset.original || lastBubble.textContent;
+    lastBubble.dataset.original = originalText;
+
+    if (lang === 'en') {
+      lastBubble.textContent = originalText;
+      return;
+    }
+
+    lastBubble.textContent = '⏳ Translating...';
+    try {
+      const res = await fetch('/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: originalText, target_language: lang })
+      });
+      if (!res.ok) throw new Error('Translation failed');
+      const data = await res.json();
+      lastBubble.textContent = data.translated_text;
+    } catch {
+      lastBubble.textContent = originalText;
+      alert('Translation unavailable. Please check your Translate API key.');
+    }
+  });
 
   async function sendMessage() {
     const text = input.value.trim();
