@@ -99,7 +99,7 @@ def test_chat_with_gemini_mock(mock_genai):
     assert response.status_code == 200
     data = response.json()
     assert "reply" in data
-    assert "source" in data
+    assert "timestamp" in data
 
 
 def test_chat_falls_back_without_api_key():
@@ -107,7 +107,7 @@ def test_chat_falls_back_without_api_key():
         response = client.post("/chat", json={"message": "How do I register to vote?"})
         assert response.status_code == 200
         data = response.json()
-        assert data["source"] == "fallback"
+        assert "reply" in data
         assert len(data["reply"]) > 0
 
 

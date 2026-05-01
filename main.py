@@ -15,11 +15,34 @@ import hashlib
 from datetime import datetime, timedelta
 from collections import defaultdict
 
+from typing import Optional, List, Dict, Any, Tuple
+from fastapi.responses import JSONResponse
+
+# Constants
+MAX_MESSAGE_LENGTH = 1000
+MAX_HISTORY_LENGTH = 20
+RATE_LIMIT_REQUESTS = 30
+RATE_LIMIT_WINDOW = 60
+SUPPORTED_LANGUAGES = ["en", "hi", "kn", "ta", "te", "ml", "mr", "bn"]
+APP_VERSION = "2.0.0"
+
+class RateLimitError(Exception):
+    """Raised when rate limit is exceeded"""
+    pass
+
+class AIServiceError(Exception):
+    """Raised when AI service fails"""
+    pass
+
+class TranslationError(Exception):
+    """Raised when translation fails"""
+    pass
+
 # TTL Cache - expires after 1 hour
-cache_store = {}
+cache_store: Dict[str, Tuple[str, datetime]] = {}
 CACHE_TTL = 3600
 
-def get_cached(key: str):
+def get_cached(key: str) -> Optional[str]:
     if key in cache_store:
         data, timestamp = cache_store[key]
         if datetime.now() - timestamp < timedelta(seconds=CACHE_TTL):
@@ -27,7 +50,7 @@ def get_cached(key: str):
         del cache_store[key]
     return None
 
-def set_cached(key: str, value: str):
+def set_cached(key: str, value: str) -> None:
     if len(cache_store) > 200:
         oldest = min(cache_store.keys(), key=lambda k: cache_store[k][1])
         del cache_store[oldest]
@@ -151,7 +174,13 @@ async def startup_event():
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost",
+        "http://localhost:8000",
+        "http://localhost:3000",
+        "http://127.0.0.1",
+        "http://127.0.0.1:8000"
+    ],
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
@@ -161,54 +190,41 @@ templates = Jinja2Templates(directory="templates")
 
 
 # ── Models ─────────────────────────────────────────────────────────────────────
-class ChatMessage(BaseModel):
+class Message(BaseModel):
     role: str
     content: str
+    
+    class Config:
+        str_strip_whitespace = True
 
 class ChatRequest(BaseModel):
     message: str
-    history: list[ChatMessage] = []
-
-    @field_validator("message")
-    @classmethod
-    def message_not_empty(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("Message cannot be empty.")
-        if len(v) > 1000:
-            raise ValueError("Message too long (max 1000 characters).")
-        return v
-
-class TranslateRequest(BaseModel):
-    text: str
-    target_language: str
-
-    @field_validator("target_language")
-    @classmethod
-    def valid_language(cls, v: str) -> str:
-        allowed = {"en", "hi", "kn", "ta", "te", "ml"}
-        if v not in allowed:
-            raise ValueError(f"Language must be one of {allowed}")
-        return v
-
-    @field_validator("text")
-    @classmethod
-    def text_not_empty(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("Text cannot be empty.")
-        if len(v) > 5000:
-            raise ValueError("Text too long (max 5000 characters).")
-        return v
+    history: List[Message] = []
+    language: Optional[str] = "en"
+    
+    class Config:
+        str_strip_whitespace = True
 
 class ChatResponse(BaseModel):
     reply: str
-    source: str
-
-class TranslateResponse(BaseModel):
-    translated_text: str
-    source_language: str
+    cached: bool = False
+    language: str = "en"
+    timestamp: str = ""
+    
+class TranslateRequest(BaseModel):
+    text: str
     target_language: str
+    
+    class Config:
+        str_strip_whitespace = True
+
+class HealthResponse(BaseModel):
+    status: str
+    gemini_configured: bool
+    translate_configured: bool
+    groq_configured: bool
+    google_services: Dict[str, Any]
+    cache_stats: Dict[str, Any]
 
 
 # ── Fallback keyword responses ─────────────────────────────────────────────────
@@ -274,7 +290,7 @@ def get_fallback_response(message: str) -> str:
     )
 
 
-def get_groq_response(message: str, history: list[ChatMessage]) -> str:
+def get_groq_response(message: str, history: List[Message]) -> str:
     """Use Groq (Llama3) as fallback when Gemini is unavailable."""
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     for msg in history[-10:]:  # last 10 turns
@@ -296,47 +312,69 @@ async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
-@app.get("/health")
-async def health():
-    return {
-        "status": "ok",
-        "gemini_configured": bool(GEMINI_API_KEY),
-        "groq_configured": bool(GROQ_API_KEY),
-        "translate_configured": bool(TRANSLATE_API_KEY),
-        "google_services": {
+@app.get("/health", response_model=HealthResponse)
+async def health_check() -> HealthResponse:
+    """
+    Health check endpoint.
+    Returns status of all configured Google services and cache statistics.
+    """
+    return HealthResponse(
+        status="ok",
+        gemini_configured=bool(GEMINI_API_KEY),
+        translate_configured=bool(TRANSLATE_API_KEY),
+        groq_configured=bool(GROQ_API_KEY),
+        google_services={
             "gemini": bool(os.getenv("GEMINI_API_KEY")),
             "translate": bool(os.getenv("TRANSLATE_API_KEY")),
             "analytics": True,
             "charts": True,
             "custom_search": True
+        },
+        cache_stats={
+            "cached_responses": len(cache_store),
+            "max_size": 200,
+            "ttl_seconds": CACHE_TTL
         }
-    }
+    )
 
 @app.get("/cache/stats")
-async def cache_stats():
+async def cache_stats() -> Dict[str, Any]:
+    """Returns cache statistics"""
     return {
         "cached_responses": len(cache_store),
         "max_size": 200,
         "ttl_seconds": CACHE_TTL
     }
 
+@app.get("/version")
+async def version() -> Dict[str, Any]:
+    """Returns current app version and metadata"""
+    return {
+        "version": APP_VERSION,
+        "app": "VoteGuide AI",
+        "description": "Indian Election Assistant powered by Google Gemini",
+        "supported_languages": SUPPORTED_LANGUAGES,
+        "google_services": ["gemini", "translate", "analytics", "charts"]
+    }
+
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: Request, payload: ChatRequest):
+async def chat(request: Request, chat_req: ChatRequest) -> Dict[str, Any]:
     """
-    1. Try Gemini first
-    2. If Gemini quota exceeded → fallback to Groq
-    3. If both fail → keyword fallback
+    Main chat endpoint for VoteGuide AI.
+    Accepts a user message and conversation history.
+    Returns AI-generated response about Indian elections.
+    Rate limited to 30 requests per minute per IP.
     """
     # ── Rate limiting & sanitization ───────────────────────────────────────────
     client_ip = request.client.host
     if not check_rate_limit(client_ip):
-        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait 1 minute.")
-    payload.message = sanitize_input(payload.message)
+        raise RateLimitError("Rate limit exceeded. Please wait 1 minute.")
+    chat_req.message = sanitize_input(chat_req.message)
 
-    cache_key = make_cache_key(payload.message)
+    cache_key = make_cache_key(chat_req.message)
     cached = get_cached(cache_key)
     if cached:
-        return {"reply": cached, "cached": True, "source": "cache"}
+        return {"reply": cached, "cached": True, "timestamp": str(datetime.now())}
 
     # ── Try Gemini ─────────────────────────────────────────────────────────────
     if GEMINI_API_KEY:
@@ -347,44 +385,47 @@ async def chat(request: Request, payload: ChatRequest):
             )
             history = [
                 {"role": msg.role, "parts": [msg.content]}
-                for msg in payload.history
+                for msg in chat_req.history
             ]
             chat_session = model.start_chat(history=history)
-            response = chat_session.send_message(payload.message)
+            response = chat_session.send_message(chat_req.message)
             reply = response.text.strip()
             set_cached(cache_key, reply)
             logger.info("Gemini responded successfully.")
-            return ChatResponse(reply=reply, source="gemini")
+            return {"reply": reply, "timestamp": str(datetime.now())}
         except Exception as exc:
             logger.warning("Gemini failed: %s — trying Groq.", exc)
 
     # ── Try Groq fallback ──────────────────────────────────────────────────────
     if groq_client:
         try:
-            reply = get_groq_response(payload.message, payload.history)
+            reply = get_groq_response(chat_req.message, chat_req.history)
             set_cached(cache_key, reply)
             logger.info("Groq responded successfully.")
-            return ChatResponse(reply=reply, source="groq")
+            return {"reply": reply, "timestamp": str(datetime.now())}
         except Exception as exc:
             logger.error("Groq failed: %s — using keyword fallback.", exc)
 
     # ── Keyword fallback ───────────────────────────────────────────────────────
-    reply = get_fallback_response(payload.message)
+    reply = get_fallback_response(chat_req.message)
     set_cached(cache_key, reply)
-    return ChatResponse(reply=reply, source="fallback")
+    return {"reply": reply, "timestamp": str(datetime.now())}
 
 
-@app.post("/translate", response_model=TranslateResponse)
-async def translate(payload: TranslateRequest):
-    """Translate text using Google Cloud Translation API."""
+@app.post("/translate")
+async def translate(req: TranslateRequest) -> Dict[str, str]:
+    """
+    Translation endpoint using Google Translate API.
+    Supports 7 Indian languages.
+    """
     if not TRANSLATE_API_KEY:
-        raise HTTPException(status_code=503, detail="Translation service not configured.")
+        raise TranslationError("Translation service not configured.")
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 TRANSLATE_URL,
                 params={"key": TRANSLATE_API_KEY},
-                json={"q": payload.text, "target": payload.target_language, "format": "text"},
+                json={"q": req.text, "target": req.target_language, "format": "text"},
                 timeout=10.0,
             )
             response.raise_for_status()
@@ -392,15 +433,51 @@ async def translate(payload: TranslateRequest):
         translation = data["data"]["translations"][0]
         translated_text = translation["translatedText"]
         source_lang = translation.get("detectedSourceLanguage", "en")
-        logger.info("Translated to %s successfully.", payload.target_language)
-        return TranslateResponse(
-            translated_text=translated_text,
-            source_language=source_lang,
-            target_language=payload.target_language,
-        )
+        logger.info("Translated to %s successfully.", req.target_language)
+        return {
+            "translated_text": translated_text,
+            "source_language": source_lang,
+            "target_language": req.target_language,
+        }
     except Exception as exc:
         logger.error("Translate error: %s", exc)
-        raise HTTPException(status_code=500, detail="Translation failed.")
+        raise TranslationError("Translation failed.")
+
+@app.exception_handler(404)
+async def not_found_handler(request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        status_code=404,
+        content={"error": "Endpoint not found", "status": 404}
+    )
+
+@app.exception_handler(500)
+async def server_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.error(f"Internal server error: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Internal server error", "status": 500}
+    )
+
+@app.exception_handler(429)
+async def rate_limit_handler(request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={"error": "Rate limit exceeded. Please wait 1 minute.", "status": 429}
+    )
+
+@app.exception_handler(RateLimitError)
+async def custom_rate_limit_handler(request: Request, exc: RateLimitError) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={"error": str(exc), "status": 429}
+    )
+
+@app.exception_handler(TranslationError)
+async def translation_error_handler(request: Request, exc: TranslationError) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"error": str(exc), "status": 503}
+    )
 
 
 if __name__ == "__main__":
