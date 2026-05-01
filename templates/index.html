@@ -402,6 +402,23 @@
       outline: 3px solid #FF9933;
     }
   </style>
+<!-- Google Analytics GA4 -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-XXXXXXXXXX');
+  
+  // Track custom events
+  function trackEvent(eventName, params) {
+    gtag('event', eventName, params);
+  }
+</script>
+<!-- Google Charts -->
+<script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+<!-- Google Custom Search Engine -->
+<script async src="https://cse.google.com/cse.js?cx=partner-pub-election"></script>
 </head>
 <body>
 
@@ -485,6 +502,13 @@
       </div>
     </div>
 
+    <!-- Google Charts Section -->
+    <div style="margin-top:20px; padding:15px; background:rgba(255,255,255,0.05); border-radius:12px;">
+      <h3 style="color:#FF9933; font-size:14px; margin-bottom:10px;">📊 India Election Stats</h3>
+      <div id="voter-chart" style="width:100%; height:200px;"></div>
+      <div id="phase-chart" style="width:100%; height:200px; margin-top:10px;"></div>
+    </div>
+
   </aside>
 
   <!-- Chat -->
@@ -517,6 +541,16 @@
       </div>
     </div>
 
+<!-- Google Custom Search -->
+<div style="margin-bottom:10px; padding: 0 20px;">
+  <button onclick="toggleNewsSearch()" style="background:rgba(255,153,51,0.15); border:1px solid #FF9933; color:#FF9933; padding:6px 14px; border-radius:20px; cursor:pointer; font-size:12px;">
+    🔍 Search Latest Election News
+  </button>
+  <div id="news-search-box" style="display:none; margin-top:8px;">
+    <gcse:search></gcse:search>
+  </div>
+</div>
+
     <div class="chat-input-area">
       <textarea id="user-input" rows="1" placeholder="Ask about voter registration, EVMs, NOTA…" maxlength="1000" aria-label="Type your election question here" aria-required="true"></textarea>
       <button id="send-btn" onclick="sendMessage()" aria-label="Send message">
@@ -545,6 +579,22 @@
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   });
+
+  document.querySelectorAll('.quick-chip').forEach(btn => {
+    btn.addEventListener('click', function() {
+      trackEvent('quick_topic_clicked', { 'topic': this.textContent });
+    });
+  });
+
+function toggleNewsSearch() {
+  var box = document.getElementById('news-search-box');
+  if (box.style.display === 'none') {
+    box.style.display = 'block';
+    trackEvent('news_search_opened', { 'page_location': window.location.href });
+  } else {
+    box.style.display = 'none';
+  }
+}
 
   function sendQuick(text) {
     input.value = text;
@@ -634,6 +684,9 @@
     const text = input.value.trim();
     if (!text || isTyping) return;
 
+    const currentLanguage = document.getElementById('lang-select').value;
+    trackEvent('chat_message_sent', { 'language': currentLanguage, 'page_location': window.location.href });
+
     input.value = '';
     input.style.height = 'auto';
     isTyping = true;
@@ -668,6 +721,56 @@
       isTyping = false;
     }
   }
+
+// Google Charts
+google.charts.load('current', {'packages':['corechart','bar']});
+google.charts.setOnLoadCallback(drawCharts);
+
+function drawCharts() {
+  // Voter turnout chart
+  var turnoutData = google.visualization.arrayToDataTable([
+    ['Election Year', 'Voter Turnout %'],
+    ['2009', 58.2],
+    ['2014', 66.4],
+    ['2019', 67.4],
+    ['2024', 65.8]
+  ]);
+  var turnoutOptions = {
+    title: 'Voter Turnout %',
+    backgroundColor: 'transparent',
+    titleTextStyle: { color: '#FF9933', fontSize: 11 },
+    legend: { textStyle: { color: '#ffffff' } },
+    hAxis: { textStyle: { color: '#ffffff' }, gridlines: { color: 'transparent' } },
+    vAxis: { textStyle: { color: '#ffffff' }, gridlines: { color: '#ffffff22' } },
+    colors: ['#FF9933'],
+    chartArea: { width: '80%', height: '65%' }
+  };
+  var turnoutChart = new google.visualization.ColumnChart(document.getElementById('voter-chart'));
+  turnoutChart.draw(turnoutData, turnoutOptions);
+
+  // Election phases chart
+  var phaseData = google.visualization.arrayToDataTable([
+    ['Phase', 'Constituencies'],
+    ['Phase 1', 102],
+    ['Phase 2', 89],
+    ['Phase 3', 94],
+    ['Phase 4', 96],
+    ['Phase 5', 49],
+    ['Phase 6', 58],
+    ['Phase 7', 57]
+  ]);
+  var phaseOptions = {
+    title: '2024 Election Phases',
+    backgroundColor: 'transparent',
+    titleTextStyle: { color: '#138808', fontSize: 11 },
+    legend: { textStyle: { color: '#ffffff' } },
+    pieSliceTextStyle: { color: '#ffffff' },
+    colors: ['#FF9933','#ffffff','#138808','#000080','#FF9933','#138808','#000080'],
+    chartArea: { width: '80%', height: '65%' }
+  };
+  var phaseChart = new google.visualization.PieChart(document.getElementById('phase-chart'));
+  phaseChart.draw(phaseData, phaseOptions);
+}
 </script>
 
 </body>

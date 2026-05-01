@@ -275,6 +275,13 @@ async def health():
         "gemini_configured": bool(GEMINI_API_KEY),
         "groq_configured": bool(GROQ_API_KEY),
         "translate_configured": bool(TRANSLATE_API_KEY),
+        "google_services": {
+            "gemini": bool(os.getenv("GEMINI_API_KEY")),
+            "translate": bool(os.getenv("TRANSLATE_API_KEY")),
+            "analytics": True,
+            "charts": True,
+            "custom_search": True
+        }
     }
 
 
