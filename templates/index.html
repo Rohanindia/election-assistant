@@ -560,10 +560,55 @@
 </div>
 
 <script>
+// ============================================
+// VoteGuide AI - Main Application JavaScript
+// Version: 2.0.0
+// Google Services: Gemini, Translate, Analytics, Charts
+// ============================================
+
+// Configuration
+const CONFIG = {
+  MAX_MESSAGE_LENGTH: 1000,
+  MAX_HISTORY_LENGTH: 20,
+  DEBOUNCE_DELAY: 300,
+  SUPPORTED_LANGUAGES: ['en', 'hi', 'kn', 'ta', 'te', 'ml', 'mr', 'bn']
+};
+
+// State Management
+const STATE = {
+  isLoading: false,
+  currentLanguage: 'en',
+  chatHistory: [],
+  messageCount: 0
+};
+
+/**
+ * Global error handler
+ * @param {Error} error - The error object
+ * @param {string} context - Where the error occurred
+ */
+function handleError(error, context = 'unknown') {
+  console.error(`Error in ${context}:`, error);
+  trackEvent('error_occurred', {'context': context, 'message': error.message});
+  return 'Sorry, something went wrong. Please try again.';
+}
+
+/**
+ * Validates user input before sending
+ * @param {string} message - User message
+ * @returns {boolean} - True if valid
+ */
+function validateInput(message) {
+  if (!message || message.trim().length === 0) return false;
+  if (message.length > CONFIG.MAX_MESSAGE_LENGTH) {
+    alert(`Message too long. Max ${CONFIG.MAX_MESSAGE_LENGTH} characters.`);
+    return false;
+  }
+  return true;
+}
+
   const input    = document.getElementById('user-input');
   const messages = document.getElementById('chat-messages');
-  let history    = [];
-  let isTyping   = false;
 
   // Auto-grow textarea
   input.addEventListener('input', () => {
@@ -641,9 +686,33 @@ function toggleNewsSearch() {
     if (t) t.remove();
   }
 
+  /**
+   * Translates text using Google Translate API
+   * @param {string} text - Text to translate
+   * @param {string} targetLang - Target language code
+   * @async
+   * @returns {Promise<string>} Translated text
+   */
+  async function translateText(text, targetLang) {
+    try {
+      const res = await fetch('/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text, target_language: targetLang })
+      });
+      if (!res.ok) throw new Error('Translation failed');
+      const data = await res.json();
+      return data.translated_text;
+    } catch (err) {
+      handleError(err, 'translateText');
+      throw err;
+    }
+  }
+
   // ── Translate last bot message when language changes ──
   document.getElementById('lang-select').addEventListener('change', async function() {
-    const lang = this.value;
+    STATE.currentLanguage = this.value;
+    const lang = STATE.currentLanguage;
     const botBubbles = messages.querySelectorAll('.msg.bot .msg-bubble');
     if (!botBubbles.length) return;
     const lastBubble = botBubbles[botBubbles.length - 1];
@@ -657,15 +726,9 @@ function toggleNewsSearch() {
 
     lastBubble.textContent = '⏳ Translating...';
     try {
-      const res = await fetch('/translate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: originalText, target_language: lang })
-      });
-      if (!res.ok) throw new Error('Translation failed');
-      const data = await res.json();
-      lastBubble.textContent = data.translated_text;
-    } catch {
+      const translated = await translateText(originalText, lang);
+      lastBubble.textContent = translated;
+    } catch (err) {
       lastBubble.textContent = originalText;
       alert('Translation unavailable. Please check your Translate API key.');
     }
@@ -680,16 +743,22 @@ function toggleNewsSearch() {
     }
   }
 
+  /**
+   * Sends user message to VoteGuide AI backend
+   * Uses Google Gemini API for intelligent responses
+   * @async
+   * @returns {Promise<void>}
+   */
   async function sendMessage() {
     const text = input.value.trim();
-    if (!text || isTyping) return;
+    if (!validateInput(text) || STATE.isLoading) return;
 
-    const currentLanguage = document.getElementById('lang-select').value;
-    trackEvent('chat_message_sent', { 'language': currentLanguage, 'page_location': window.location.href });
+    STATE.currentLanguage = document.getElementById('lang-select').value;
+    trackEvent('chat_message_sent', { 'language': STATE.currentLanguage, 'page_location': window.location.href });
 
     input.value = '';
     input.style.height = 'auto';
-    isTyping = true;
+    STATE.isLoading = true;
 
     appendMsg('user', text);
     showTyping();
@@ -703,7 +772,7 @@ function toggleNewsSearch() {
           'Content-Type': 'application/json',
           'Accept-Encoding': 'gzip'
         },
-        body: JSON.stringify({ message: text, history })
+        body: JSON.stringify({ message: text, history: STATE.chatHistory })
       });
       const perfEnd = performance.now();
       console.log('Response time: ' + Math.round(perfEnd - perfStart) + 'ms');
@@ -716,17 +785,20 @@ function toggleNewsSearch() {
       appendMsg('bot', data.reply);
 
       // Update conversation history
-      history.push({ role: 'user',  content: text });
-      history.push({ role: 'model', content: data.reply });
+      STATE.chatHistory.push({ role: 'user',  content: text });
+      STATE.chatHistory.push({ role: 'model', content: data.reply });
 
-      // Keep history to last 10 turns
-      if (history.length > 20) history = history.slice(-20);
+      // Keep history to last config limit
+      if (STATE.chatHistory.length > CONFIG.MAX_HISTORY_LENGTH) {
+        STATE.chatHistory = STATE.chatHistory.slice(-CONFIG.MAX_HISTORY_LENGTH);
+      }
 
     } catch (err) {
       removeTyping();
-      appendMsg('bot', '⚠️ Could not reach the server. Please make sure the backend is running.');
+      const errorMsg = handleError(err, 'sendMessage');
+      appendMsg('bot', errorMsg);
     } finally {
-      isTyping = false;
+      STATE.isLoading = false;
     }
   }
 
