@@ -86,9 +86,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Strict-Transport-Security"] = "max-age=31536000"
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self' 'unsafe-inline' fonts.googleapis.com fonts.gstatic.com"
-        )
+        response.headers["Content-Security-Policy"] = "default-src 'self' 'unsafe-inline' 'unsafe-eval' *.googleapis.com *.gstatic.com *.googletagmanager.com *.google.com cse.google.com www.googletagmanager.com www.gstatic.com charts.googleapis.com"
         return response
 
 app.add_middleware(SecurityHeadersMiddleware)
