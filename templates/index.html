@@ -415,8 +415,7 @@
     gtag('event', eventName, params);
   }
 </script>
-<!-- Google Custom Search Engine -->
-<script async src="https://cse.google.com/cse.js?cx=partner-pub-election"></script>
+</script>
 </head>
 <body>
 
@@ -544,9 +543,6 @@
   <button onclick="toggleNewsSearch()" style="background:rgba(255,153,51,0.15); border:1px solid #FF9933; color:#FF9933; padding:6px 14px; border-radius:20px; cursor:pointer; font-size:12px;">
     🔍 Search Latest Election News
   </button>
-  <div id="news-search-box" style="display:none; margin-top:8px;">
-    <gcse:search></gcse:search>
-  </div>
 </div>
 
     <div class="chat-input-area">
@@ -585,13 +581,8 @@
   });
 
 function toggleNewsSearch() {
-  var box = document.getElementById('news-search-box');
-  if (box.style.display === 'none') {
-    box.style.display = 'block';
-    trackEvent('news_search_opened', { 'page_location': window.location.href });
-  } else {
-    box.style.display = 'none';
-  }
+  trackEvent('news_search_opened', {'page_location': window.location.href});
+  window.open('https://news.google.com/search?q=India+election+voting+ECI&hl=en-IN&gl=IN&ceid=IN:en', '_blank');
 }
 
   function sendQuick(text) {
