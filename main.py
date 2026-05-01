@@ -10,7 +10,31 @@ import re
 import time
 import logging
 import httpx
+import asyncio
+import hashlib
+from datetime import datetime, timedelta
 from collections import defaultdict
+
+# TTL Cache - expires after 1 hour
+cache_store = {}
+CACHE_TTL = 3600
+
+def get_cached(key: str):
+    if key in cache_store:
+        data, timestamp = cache_store[key]
+        if datetime.now() - timestamp < timedelta(seconds=CACHE_TTL):
+            return data
+        del cache_store[key]
+    return None
+
+def set_cached(key: str, value: str):
+    if len(cache_store) > 200:
+        oldest = min(cache_store.keys(), key=lambda k: cache_store[k][1])
+        del cache_store[oldest]
+    cache_store[key] = (value, datetime.now())
+
+def make_cache_key(text: str) -> str:
+    return hashlib.md5(text.strip().lower().encode()).hexdigest()
 from fastapi import FastAPI, HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -78,10 +102,16 @@ app = FastAPI(
     version="1.0.0",
 )
 
+from fastapi.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 # ── Security Headers Middleware ────────────────────────────────────────────────
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
+        start_time = time.time()
         response = await call_next(request)
+        process_time = time.time() - start_time
+        response.headers["X-Process-Time"] = str(round(process_time * 1000, 2)) + "ms"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
@@ -282,6 +312,13 @@ async def health():
         }
     }
 
+@app.get("/cache/stats")
+async def cache_stats():
+    return {
+        "cached_responses": len(cache_store),
+        "max_size": 200,
+        "ttl_seconds": CACHE_TTL
+    }
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: Request, payload: ChatRequest):
@@ -295,6 +332,12 @@ async def chat(request: Request, payload: ChatRequest):
     if not check_rate_limit(client_ip):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait 1 minute.")
     payload.message = sanitize_input(payload.message)
+
+    cache_key = make_cache_key(payload.message)
+    cached = get_cached(cache_key)
+    if cached:
+        return {"reply": cached, "cached": True, "source": "cache"}
+
     # ── Try Gemini ─────────────────────────────────────────────────────────────
     if GEMINI_API_KEY:
         try:
@@ -309,6 +352,7 @@ async def chat(request: Request, payload: ChatRequest):
             chat_session = model.start_chat(history=history)
             response = chat_session.send_message(payload.message)
             reply = response.text.strip()
+            set_cached(cache_key, reply)
             logger.info("Gemini responded successfully.")
             return ChatResponse(reply=reply, source="gemini")
         except Exception as exc:
@@ -318,13 +362,16 @@ async def chat(request: Request, payload: ChatRequest):
     if groq_client:
         try:
             reply = get_groq_response(payload.message, payload.history)
+            set_cached(cache_key, reply)
             logger.info("Groq responded successfully.")
             return ChatResponse(reply=reply, source="groq")
         except Exception as exc:
             logger.error("Groq failed: %s — using keyword fallback.", exc)
 
     # ── Keyword fallback ───────────────────────────────────────────────────────
-    return ChatResponse(reply=get_fallback_response(payload.message), source="fallback")
+    reply = get_fallback_response(payload.message)
+    set_cached(cache_key, reply)
+    return ChatResponse(reply=reply, source="fallback")
 
 
 @app.post("/translate", response_model=TranslateResponse)

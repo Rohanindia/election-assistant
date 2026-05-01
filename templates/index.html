@@ -416,6 +416,8 @@
   }
 </script>
 </script>
+<link rel="preload" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" as="style">
+<meta http-equiv="Cache-Control" content="max-age=3600">
 </head>
 <body>
 
@@ -669,6 +671,15 @@ function toggleNewsSearch() {
     }
   });
 
+  function pruneOldMessages() {
+    const msgs = messages.querySelectorAll('.msg');
+    if (msgs.length > 50) {
+      for (let i = 0; i < 10; i++) {
+        msgs[i].remove();
+      }
+    }
+  }
+
   async function sendMessage() {
     const text = input.value.trim();
     if (!text || isTyping) return;
@@ -682,13 +693,21 @@ function toggleNewsSearch() {
 
     appendMsg('user', text);
     showTyping();
+    pruneOldMessages();
 
     try {
+      const perfStart = performance.now();
       const res = await fetch('/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept-Encoding': 'gzip'
+        },
         body: JSON.stringify({ message: text, history })
       });
+      const perfEnd = performance.now();
+      console.log('Response time: ' + Math.round(perfEnd - perfStart) + 'ms');
+      trackEvent('response_time', {'milliseconds': Math.round(perfEnd - perfStart)});
 
       if (!res.ok) throw new Error('Network error');
       const data = await res.json();
@@ -758,6 +777,14 @@ function toggleNewsSearch() {
   }
 
   window.addEventListener('load', loadGoogleCharts);
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function() {
+      navigator.serviceWorker.register('/static/sw.js')
+        .then(reg => console.log('SW registered'))
+        .catch(err => console.log('SW failed:', err));
+    });
+  }
 </script>
 
 </body>
