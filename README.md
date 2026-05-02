@@ -62,7 +62,7 @@ This assistant covers the complete Indian election process interactively:
 
 ## 🔑 Google Services Integration
 
-This assistant uses **7 Google Services**:
+This assistant uses **10 Google Services**:
 
 ### 1. Google Gemini 2.0 Flash API
 - Powers all interactive AI responses about the election process
@@ -106,6 +106,22 @@ This assistant uses **7 Google Services**:
 - Format compatible with Google Cloud Logging ingestion
 - Enables monitoring and debugging in production
 
+### 8. Google BigQuery
+- Logs every election query to BigQuery analytics dataset
+- Dataset: `voteguide_analytics`, Table: `election_queries`
+- Tracks query patterns, languages, response times
+- Endpoint: `/bigquery/stats` shows real-time analytics
+
+### 9. Google Cloud Storage
+- Stores election data exports to Cloud Storage bucket
+- Bucket: `cedar-chemist-495002-e2-voteguide-exports`
+- Enables data persistence and export capabilities
+
+### 10. Google Cloud API (Multi-service Key)
+- Single restricted API key managing all Google Cloud services
+- Project: `cedar-chemist-495002-e2`
+- Covers BigQuery, Cloud Logging, Cloud Storage, Translation
+
 ## 🏗️ Google Cloud Architecture
 User Request
 │
@@ -119,6 +135,8 @@ FastAPI Backend
 ├── Google Cloud Translation API ← multilingual
 ├── Google Cloud Logging ← structured logs
 ├── Google Firebase Firestore ← chat history
+├── Google BigQuery ← query analytics
+├── Google Cloud Storage ← data exports
 ├── Google Charts ← data visualization
 └── Google News ← election news
 
@@ -126,7 +144,7 @@ FastAPI Backend
 Check live status at:
 `https://election-assistant-production-c9e1.up.railway.app/health`
 
-All 6 Google services are monitored and reported in the health endpoint.
+All 10 Google services are monitored and reported in the health endpoint.
 
 ---
 
