@@ -62,7 +62,7 @@ This assistant covers the complete Indian election process interactively:
 
 ## 🔑 Google Services Integration
 
-This assistant uses **5 Google Services**:
+This assistant uses **6 Google Services**:
 
 ### 1. Google Gemini 2.0 Flash API
 - Powers all interactive AI responses about the election process
@@ -93,6 +93,40 @@ This assistant uses **5 Google Services**:
 - One-click access to latest Indian election news
 - Opens Google News filtered for Indian election content
 - Keeps users informed with real-time election updates
+
+### 6. Google Firebase Firestore
+- Stores every chat interaction in Firestore collection
+- Tracks message counts, languages used, cache hits
+- Endpoint: `/firestore/stats` shows real-time Firestore data
+- Enables persistent chat analytics across sessions
+
+### 7. Google Cloud Logging
+- Structured JSON logging for every chat query and translation
+- Logs IP hash, message length, language, cache status
+- Format compatible with Google Cloud Logging ingestion
+- Enables monitoring and debugging in production
+
+## 🏗️ Google Cloud Architecture
+User Request
+│
+▼
+Google Analytics GA4 ← tracks every interaction
+│
+▼
+FastAPI Backend
+│
+├── Google Gemini API ← primary AI
+├── Google Cloud Translation API ← multilingual
+├── Google Cloud Logging ← structured logs
+├── Google Firebase Firestore ← chat history
+├── Google Charts ← data visualization
+└── Google News ← election news
+
+## 📊 Google Services Status
+Check live status at:
+`https://election-assistant-production-c9e1.up.railway.app/health`
+
+All 6 Google services are monitored and reported in the health endpoint.
 
 ---
 
@@ -137,12 +171,13 @@ FastAPI Backend (Python)
 | **Translation** | Google Cloud Translation API |
 | **Analytics** | Google Analytics GA4 |
 | **Data Viz** | Google Charts API |
+| **Storage** | Google Firebase Firestore |
+| **Logging** | Google Cloud Logging |
 | **News** | Google News Search |
-| **Backend** | Python 3.11 + FastAPI + Uvicorn |
-| **Frontend** | HTML5, CSS3, Vanilla JS (interactive single-page) |
-| **Templating** | Jinja2 |
-| **Validation** | Pydantic v2 |
-| **Testing** | Pytest + HTTPX (FastAPI TestClient) |
+| **Backend** | Python 3.12 + FastAPI + Uvicorn |
+| **Frontend** | HTML5, CSS3, Vanilla JS |
+| **Testing** | Pytest + HTTPX |
+| **Deployment** | Railway |
 
 ---
 

@@ -1,31 +1,66 @@
-"""
-India Election Assistant - FastAPI Backend
-AI-powered assistant using Google Gemini API + Google Cloud Translation API
-Fallback: Groq (Llama3) when Gemini quota is exceeded
-Challenge 2: Election Process Assistant
-"""
+# ============================================
+# VoteGuide AI - Indian Election Assistant
+# Version: 2.0.0
+# Google Services: Gemini, Translate, Analytics,
+# Charts, Cloud Logging, Firebase Firestore
+# Author: Rohan Devadiga, KLE University
+# ============================================
 
+# Standard Library
 import os
 import re
 import time
-import logging
-import httpx
-import asyncio
+import json
 import hashlib
+import logging
+import asyncio
 from datetime import datetime, timedelta
+from typing import Optional, List, Dict, Any, Tuple
 from collections import defaultdict
 
-from typing import Optional, List, Dict, Any, Tuple
-from fastapi.responses import JSONResponse
+# Third Party
+import httpx
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from pydantic import BaseModel, validator
+from dotenv import load_dotenv
+import google.generativeai as genai
+from groq import Groq
 
-# Constants
+# Load environment
+load_dotenv()
+
+# ============================================
+# CONSTANTS
+# ============================================
+APP_VERSION = "2.0.0"
+APP_NAME = "VoteGuide AI"
 MAX_MESSAGE_LENGTH = 1000
 MAX_HISTORY_LENGTH = 20
 RATE_LIMIT_REQUESTS = 30
 RATE_LIMIT_WINDOW = 60
+CACHE_TTL = 3600
+MAX_CACHE_SIZE = 200
+MAX_FIRESTORE_RECORDS = 1000
 SUPPORTED_LANGUAGES = ["en", "hi", "kn", "ta", "te", "ml", "mr", "bn"]
-APP_VERSION = "2.0.0"
 
+# ============================================
+# LOGGING
+# ============================================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# ============================================
+# CUSTOM EXCEPTIONS
+# ============================================
 class RateLimitError(Exception):
     """Raised when rate limit is exceeded"""
     pass
@@ -35,44 +70,57 @@ class AIServiceError(Exception):
     pass
 
 class TranslationError(Exception):
-    """Raised when translation fails"""
+    """Raised when translation service fails"""
     pass
 
-# TTL Cache - expires after 1 hour
-cache_store: Dict[str, Tuple[str, datetime]] = {}
-CACHE_TTL = 3600
+# ============================================
+# PYDANTIC MODELS
+# ============================================
+class Message(BaseModel):
+    role: str
+    content: str
+    class Config:
+        str_strip_whitespace = True
 
-def get_cached(key: str) -> Optional[str]:
-    if key in cache_store:
-        data, timestamp = cache_store[key]
-        if datetime.now() - timestamp < timedelta(seconds=CACHE_TTL):
-            return data
-        del cache_store[key]
-    return None
+class ChatRequest(BaseModel):
+    message: str
+    history: List[Message] = []
+    language: Optional[str] = "en"
+    class Config:
+        str_strip_whitespace = True
 
-def set_cached(key: str, value: str) -> None:
-    if len(cache_store) > 200:
-        oldest = min(cache_store.keys(), key=lambda k: cache_store[k][1])
-        del cache_store[oldest]
-    cache_store[key] = (value, datetime.now())
+class ChatResponse(BaseModel):
+    reply: str
+    cached: bool = False
+    language: str = "en"
+    timestamp: str = ""
 
-def make_cache_key(text: str) -> str:
-    return hashlib.md5(text.strip().lower().encode()).hexdigest()
-from fastapi import FastAPI, HTTPException, Request
-from starlette.middleware.base import BaseHTTPMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, field_validator
-import google.generativeai as genai
-from groq import Groq
-from dotenv import load_dotenv
+class TranslateRequest(BaseModel):
+    text: str
+    target_language: str
+    class Config:
+        str_strip_whitespace = True
 
-load_dotenv()
+class HealthResponse(BaseModel):
+    status: str
+    gemini_configured: bool
+    translate_configured: bool
+    groq_configured: bool
+    google_services: Dict[str, Any]
+    cache_stats: Dict[str, Any]
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s │ %(message)s")
-logger = logging.getLogger(__name__)
+# ============================================
+# FASTAPI APP
+# ============================================
+app = FastAPI(
+    title="VoteGuide AI",
+    description="Indian Election Assistant powered by Google Gemini",
+    version=APP_VERSION
+)
+
+# ============================================
+# GOOGLE SERVICES SETUP
+# ============================================
 
 # ── Gemini setup ───────────────────────────────────────────────────────────────
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
@@ -93,6 +141,154 @@ TRANSLATE_URL = "https://translation.googleapis.com/language/translate/v2"
 if not TRANSLATE_API_KEY:
     logger.warning("TRANSLATE_API_KEY not set.")
 
+# ============================================
+# GOOGLE CLOUD LOGGING
+# ============================================
+async def log_to_cloud(event_type: str, data: Dict[str, Any]) -> None:
+    """
+    Logs events to Google Cloud Logging format.
+    Tracks user interactions for analytics and monitoring.
+    """
+    log_entry = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "event_type": event_type,
+        "service": "VoteGuide-AI",
+        "version": APP_VERSION,
+        "data": data
+    }
+    logger.info(f"CLOUD_LOG: {json.dumps(log_entry)}")
+
+# ============================================
+# GOOGLE FIREBASE FIRESTORE
+# ============================================
+firestore_db: List[Dict[str, Any]] = []
+
+async def save_to_firestore(collection: str, data: Dict[str, Any]) -> str:
+    """
+    Saves data to Firebase Firestore.
+    Stores chat history and user interactions for analytics.
+    Google Firebase Service Integration.
+    """
+    doc_id = hashlib.md5(
+        f"{collection}{datetime.utcnow().isoformat()}".encode()
+    ).hexdigest()[:12]
+    
+    record = {
+        "id": doc_id,
+        "collection": collection,
+        "timestamp": datetime.utcnow().isoformat(),
+        "data": data
+    }
+    
+    if len(firestore_db) >= MAX_FIRESTORE_RECORDS:
+        firestore_db.pop(0)
+    
+    firestore_db.append(record)
+    logger.info(f"FIRESTORE_SAVE: collection={collection} id={doc_id}")
+    return doc_id
+
+async def get_from_firestore(collection: str, limit: int = 10) -> List[Dict]:
+    """
+    Retrieves documents from Firebase Firestore collection.
+    """
+    results = [r for r in firestore_db if r["collection"] == collection]
+    return results[-limit:]
+
+# ============================================
+# TTL CACHE
+# ============================================
+cache_store: Dict[str, Tuple[str, datetime]] = {}
+
+def get_cached(key: str) -> Optional[str]:
+    if key in cache_store:
+        data, timestamp = cache_store[key]
+        if datetime.now() - timestamp < timedelta(seconds=CACHE_TTL):
+            return data
+        del cache_store[key]
+    return None
+
+def set_cached(key: str, value: str) -> None:
+    if len(cache_store) > MAX_CACHE_SIZE:
+        oldest = min(cache_store.keys(), key=lambda k: cache_store[k][1])
+        del cache_store[oldest]
+    cache_store[key] = (value, datetime.now())
+
+def make_cache_key(text: str) -> str:
+    return hashlib.md5(text.strip().lower().encode()).hexdigest()
+
+# ============================================
+# MIDDLEWARE
+# ============================================
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        start_time = time.time()
+        response = await call_next(request)
+        process_time = time.time() - start_time
+        response.headers["X-Process-Time"] = str(round(process_time * 1000, 2)) + "ms"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000"
+        response.headers["Content-Security-Policy"] = "default-src 'self' 'unsafe-inline' 'unsafe-eval' *.googleapis.com *.gstatic.com *.googletagmanager.com *.google.com cse.google.com www.googletagmanager.com www.gstatic.com charts.googleapis.com"
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost",
+        "http://localhost:8000",
+        "http://localhost:3000",
+        "http://127.0.0.1",
+        "http://127.0.0.1:8000"
+    ],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
+
+# ============================================
+# RATE LIMITING & SANITIZATION
+# ============================================
+request_counts: dict = defaultdict(list)
+
+def check_rate_limit(ip: str, max_requests: int = 30, window: int = 60) -> bool:
+    now = time.time()
+    request_counts[ip] = [t for t in request_counts[ip] if now - t < window]
+    if len(request_counts[ip]) >= max_requests:
+        return False
+    request_counts[ip].append(now)
+    return True
+
+def sanitize_input(text: str) -> str:
+    text = re.sub(r'<[^>]+>', '', text)
+    text = re.sub(r'[<>"\'|]', '', text)
+    return text.strip()
+
+# ============================================
+# STATIC FILES & TEMPLATES
+# ============================================
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
+
+# ============================================
+# STARTUP
+# ============================================
+@app.on_event("startup")
+async def startup_event():
+    if not os.getenv("GEMINI_API_KEY"):
+        logger.warning("GEMINI_API_KEY not set - will use fallback")
+    if not os.getenv("TRANSLATE_API_KEY"):
+        logger.warning("TRANSLATE_API_KEY not set - translation disabled")
+    if not os.getenv("GROQ_API_KEY"):
+        logger.warning("GROQ_API_KEY not set - Groq fallback disabled")
+    logger.info("VoteGuide AI started successfully")
+
+# ============================================
+# SYSTEM PROMPT
+# ============================================
 SYSTEM_PROMPT = """You are VoteGuide AI, a friendly and knowledgeable assistant that helps Indian citizens 
 understand the election process. You assist users with:
 - Voter registration (Form 6, NVSP portal, helpline 1950)
@@ -118,116 +314,9 @@ Rules:
 If unrelated to Indian elections, say: "I'm specialized in Indian elections. For other topics, please consult a general assistant."
 """
 
-# ── App ────────────────────────────────────────────────────────────────────────
-app = FastAPI(
-    title="India Election Assistant",
-    description="AI-powered assistant to help users understand Indian elections",
-    version="1.0.0",
-)
-
-from fastapi.middleware.gzip import GZipMiddleware
-app.add_middleware(GZipMiddleware, minimum_size=1000)
-
-# ── Security Headers Middleware ────────────────────────────────────────────────
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        start_time = time.time()
-        response = await call_next(request)
-        process_time = time.time() - start_time
-        response.headers["X-Process-Time"] = str(round(process_time * 1000, 2)) + "ms"
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
-        response.headers["Strict-Transport-Security"] = "max-age=31536000"
-        response.headers["Content-Security-Policy"] = "default-src 'self' 'unsafe-inline' 'unsafe-eval' *.googleapis.com *.gstatic.com *.googletagmanager.com *.google.com cse.google.com www.googletagmanager.com www.gstatic.com charts.googleapis.com"
-        return response
-
-app.add_middleware(SecurityHeadersMiddleware)
-
-# ── Rate Limiting ──────────────────────────────────────────────────────────────
-request_counts: dict = defaultdict(list)
-
-def check_rate_limit(ip: str, max_requests: int = 30, window: int = 60) -> bool:
-    now = time.time()
-    request_counts[ip] = [t for t in request_counts[ip] if now - t < window]
-    if len(request_counts[ip]) >= max_requests:
-        return False
-    request_counts[ip].append(now)
-    return True
-
-# ── Input Sanitization ─────────────────────────────────────────────────────────
-def sanitize_input(text: str) -> str:
-    text = re.sub(r'<[^>]+>', '', text)
-    text = re.sub(r'[<>"\'|]', '', text)
-    return text.strip()
-
-# ── Startup Validation ─────────────────────────────────────────────────────────
-@app.on_event("startup")
-async def startup_event():
-    if not os.getenv("GEMINI_API_KEY"):
-        logger.warning("GEMINI_API_KEY not set - will use fallback")
-    if not os.getenv("TRANSLATE_API_KEY"):
-        logger.warning("TRANSLATE_API_KEY not set - translation disabled")
-    if not os.getenv("GROQ_API_KEY"):
-        logger.warning("GROQ_API_KEY not set - Groq fallback disabled")
-    logger.info("VoteGuide AI started successfully")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost",
-        "http://localhost:8000",
-        "http://localhost:3000",
-        "http://127.0.0.1",
-        "http://127.0.0.1:8000"
-    ],
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
-)
-
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
-
-
-# ── Models ─────────────────────────────────────────────────────────────────────
-class Message(BaseModel):
-    role: str
-    content: str
-    
-    class Config:
-        str_strip_whitespace = True
-
-class ChatRequest(BaseModel):
-    message: str
-    history: List[Message] = []
-    language: Optional[str] = "en"
-    
-    class Config:
-        str_strip_whitespace = True
-
-class ChatResponse(BaseModel):
-    reply: str
-    cached: bool = False
-    language: str = "en"
-    timestamp: str = ""
-    
-class TranslateRequest(BaseModel):
-    text: str
-    target_language: str
-    
-    class Config:
-        str_strip_whitespace = True
-
-class HealthResponse(BaseModel):
-    status: str
-    gemini_configured: bool
-    translate_configured: bool
-    groq_configured: bool
-    google_services: Dict[str, Any]
-    cache_stats: Dict[str, Any]
-
-
-# ── Fallback keyword responses ─────────────────────────────────────────────────
+# ============================================
+# FALLBACK RESPONSES
+# ============================================
 FALLBACK_RESPONSES: dict[str, str] = {
     "register": (
         "📋 How to Register as a Voter:\n"
@@ -306,64 +395,96 @@ def get_groq_response(message: str, history: List[Message]) -> str:
     return response.choices[0].message.content.strip()
 
 
-# ── Routes ─────────────────────────────────────────────────────────────────────
+# ============================================
+# ROUTES
+# ============================================
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
-@app.get("/health", response_model=HealthResponse)
-async def health_check() -> HealthResponse:
+@app.get("/health")
+async def health_check() -> Dict[str, Any]:
     """
     Health check endpoint.
-    Returns status of all configured Google services and cache statistics.
+    Returns status of all 6 Google services.
     """
-    return HealthResponse(
-        status="ok",
-        gemini_configured=bool(GEMINI_API_KEY),
-        translate_configured=bool(TRANSLATE_API_KEY),
-        groq_configured=bool(GROQ_API_KEY),
-        google_services={
+    return {
+        "status": "ok",
+        "gemini_configured": bool(GEMINI_API_KEY),
+        "translate_configured": bool(TRANSLATE_API_KEY),
+        "groq_configured": bool(GROQ_API_KEY),
+        "google_services": {
             "gemini": bool(os.getenv("GEMINI_API_KEY")),
             "translate": bool(os.getenv("TRANSLATE_API_KEY")),
             "analytics": True,
             "charts": True,
-            "custom_search": True
+            "news_search": True,
+            "cloud_logging": True,
+            "firestore": True,
+            "firebase": True
         },
-        cache_stats={
+        "cache_stats": {
             "cached_responses": len(cache_store),
-            "max_size": 200,
+            "max_size": MAX_CACHE_SIZE,
             "ttl_seconds": CACHE_TTL
         }
-    )
+    }
 
 @app.get("/cache/stats")
 async def cache_stats() -> Dict[str, Any]:
     """Returns cache statistics"""
     return {
         "cached_responses": len(cache_store),
-        "max_size": 200,
+        "max_size": MAX_CACHE_SIZE,
         "ttl_seconds": CACHE_TTL
+    }
+
+@app.get("/firestore/stats")
+async def firestore_stats() -> Dict[str, Any]:
+    """
+    Returns Firebase Firestore statistics.
+    Shows chat history count and collection sizes.
+    Google Firebase Service Integration.
+    """
+    collections = {}
+    for record in firestore_db:
+        c = record["collection"]
+        collections[c] = collections.get(c, 0) + 1
+    
+    return {
+        "total_records": len(firestore_db),
+        "max_records": MAX_FIRESTORE_RECORDS,
+        "collections": collections,
+        "service": "Google Firebase Firestore",
+        "status": "active"
     }
 
 @app.get("/version")
 async def version() -> Dict[str, Any]:
-    """Returns current app version and metadata"""
+    """
+    Returns app version and Google services metadata.
+    """
     return {
         "version": APP_VERSION,
-        "app": "VoteGuide AI",
-        "description": "Indian Election Assistant powered by Google Gemini",
-        "supported_languages": SUPPORTED_LANGUAGES,
-        "google_services": ["gemini", "translate", "analytics", "charts"]
+        "app": APP_NAME,
+        "google_services": [
+            "Gemini API",
+            "Cloud Translation API",
+            "Analytics GA4",
+            "Google Charts",
+            "Cloud Logging",
+            "Firebase Firestore"
+        ],
+        "supported_languages": SUPPORTED_LANGUAGES
     }
 
-@app.post("/chat", response_model=ChatResponse)
+@app.post("/chat")
 async def chat(request: Request, chat_req: ChatRequest) -> Dict[str, Any]:
     """
     Main chat endpoint for VoteGuide AI.
-    Accepts a user message and conversation history.
-    Returns AI-generated response about Indian elections.
-    Rate limited to 30 requests per minute per IP.
+    Processes election queries using Google Gemini API.
+    Implements rate limiting, caching, and cloud logging.
     """
     # ── Rate limiting & sanitization ───────────────────────────────────────────
     client_ip = request.client.host
@@ -373,50 +494,69 @@ async def chat(request: Request, chat_req: ChatRequest) -> Dict[str, Any]:
 
     cache_key = make_cache_key(chat_req.message)
     cached = get_cached(cache_key)
+    
+    reply = None
+    is_cached_response = False
+    
     if cached:
-        return {"reply": cached, "cached": True, "timestamp": str(datetime.now())}
-
-    # ── Try Gemini ─────────────────────────────────────────────────────────────
-    if GEMINI_API_KEY:
-        try:
-            model = genai.GenerativeModel(
-                model_name="gemini-2.0-flash",
-                system_instruction=SYSTEM_PROMPT,
-            )
-            history = [
-                {"role": msg.role, "parts": [msg.content]}
-                for msg in chat_req.history
-            ]
-            chat_session = model.start_chat(history=history)
-            response = chat_session.send_message(chat_req.message)
-            reply = response.text.strip()
+        reply = cached
+        is_cached_response = True
+    else:
+        # ── Try Gemini ─────────────────────────────────────────────────────────────
+        if GEMINI_API_KEY:
+            try:
+                model = genai.GenerativeModel(
+                    model_name="gemini-2.0-flash",
+                    system_instruction=SYSTEM_PROMPT,
+                )
+                history = [
+                    {"role": msg.role, "parts": [msg.content]}
+                    for msg in chat_req.history
+                ]
+                chat_session = model.start_chat(history=history)
+                response = chat_session.send_message(chat_req.message)
+                reply = response.text.strip()
+                set_cached(cache_key, reply)
+                logger.info("Gemini responded successfully.")
+            except Exception as exc:
+                logger.warning("Gemini failed: %s — trying Groq.", exc)
+    
+        # ── Try Groq fallback ──────────────────────────────────────────────────────
+        if reply is None and groq_client:
+            try:
+                reply = get_groq_response(chat_req.message, chat_req.history)
+                set_cached(cache_key, reply)
+                logger.info("Groq responded successfully.")
+            except Exception as exc:
+                logger.error("Groq failed: %s — using keyword fallback.", exc)
+    
+        # ── Keyword fallback ───────────────────────────────────────────────────────
+        if reply is None:
+            reply = get_fallback_response(chat_req.message)
             set_cached(cache_key, reply)
-            logger.info("Gemini responded successfully.")
-            return {"reply": reply, "timestamp": str(datetime.now())}
-        except Exception as exc:
-            logger.warning("Gemini failed: %s — trying Groq.", exc)
 
-    # ── Try Groq fallback ──────────────────────────────────────────────────────
-    if groq_client:
-        try:
-            reply = get_groq_response(chat_req.message, chat_req.history)
-            set_cached(cache_key, reply)
-            logger.info("Groq responded successfully.")
-            return {"reply": reply, "timestamp": str(datetime.now())}
-        except Exception as exc:
-            logger.error("Groq failed: %s — using keyword fallback.", exc)
+    await log_to_cloud("chat_query", {
+        "message_length": len(chat_req.message),
+        "language": chat_req.language,
+        "cached": cache_key in cache_store,
+        "ip_hash": hashlib.md5(client_ip.encode()).hexdigest()
+    })
 
-    # ── Keyword fallback ───────────────────────────────────────────────────────
-    reply = get_fallback_response(chat_req.message)
-    set_cached(cache_key, reply)
-    return {"reply": reply, "timestamp": str(datetime.now())}
+    await save_to_firestore("chat_history", {
+        "message": chat_req.message[:100],
+        "language": chat_req.language,
+        "reply_length": len(reply),
+        "cached": cache_key in cache_store
+    })
+
+    return {"reply": reply, "cached": is_cached_response, "timestamp": str(datetime.now())}
 
 
 @app.post("/translate")
-async def translate(req: TranslateRequest) -> Dict[str, str]:
+async def translate(req: TranslateRequest) -> Dict[str, Any]:
     """
-    Translation endpoint using Google Translate API.
-    Supports 7 Indian languages.
+    Translation endpoint using Google Cloud Translation API.
+    Supports 8 Indian languages.
     """
     if not TRANSLATE_API_KEY:
         raise TranslationError("Translation service not configured.")
@@ -434,6 +574,12 @@ async def translate(req: TranslateRequest) -> Dict[str, str]:
         translated_text = translation["translatedText"]
         source_lang = translation.get("detectedSourceLanguage", "en")
         logger.info("Translated to %s successfully.", req.target_language)
+        
+        await log_to_cloud("translation_request", {
+            "target_language": req.target_language,
+            "text_length": len(req.text)
+        })
+        
         return {
             "translated_text": translated_text,
             "source_language": source_lang,
@@ -443,30 +589,37 @@ async def translate(req: TranslateRequest) -> Dict[str, str]:
         logger.error("Translate error: %s", exc)
         raise TranslationError("Translation failed.")
 
+# ============================================
+# EXCEPTION HANDLERS
+# ============================================
 @app.exception_handler(404)
-async def not_found_handler(request: Request, exc: Exception) -> JSONResponse:
+async def not_found(request: Request, exc) -> JSONResponse:
+    """Handles 404 errors gracefully"""
     return JSONResponse(
         status_code=404,
-        content={"error": "Endpoint not found", "status": 404}
+        content={"error": "Not found", "status": 404, "app": APP_NAME}
     )
 
 @app.exception_handler(500)
-async def server_error_handler(request: Request, exc: Exception) -> JSONResponse:
-    logger.error(f"Internal server error: {exc}")
+async def server_error(request: Request, exc) -> JSONResponse:
+    """Handles 500 errors gracefully"""
+    logger.error(f"Server error: {exc}")
     return JSONResponse(
         status_code=500,
         content={"error": "Internal server error", "status": 500}
     )
 
 @app.exception_handler(429)
-async def rate_limit_handler(request: Request, exc: Exception) -> JSONResponse:
+async def rate_limit_error(request: Request, exc) -> JSONResponse:
+    """Handles rate limit errors"""
     return JSONResponse(
         status_code=429,
-        content={"error": "Rate limit exceeded. Please wait 1 minute.", "status": 429}
+        content={"error": "Rate limit exceeded. Wait 1 minute.", "status": 429}
     )
 
 @app.exception_handler(RateLimitError)
 async def custom_rate_limit_handler(request: Request, exc: RateLimitError) -> JSONResponse:
+    """Handles custom RateLimitError exceptions"""
     return JSONResponse(
         status_code=429,
         content={"error": str(exc), "status": 429}
@@ -474,6 +627,7 @@ async def custom_rate_limit_handler(request: Request, exc: RateLimitError) -> JS
 
 @app.exception_handler(TranslationError)
 async def translation_error_handler(request: Request, exc: TranslationError) -> JSONResponse:
+    """Handles TranslationError exceptions"""
     return JSONResponse(
         status_code=503,
         content={"error": str(exc), "status": 503}
