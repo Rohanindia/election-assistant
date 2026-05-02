@@ -62,7 +62,7 @@ This assistant covers the complete Indian election process interactively:
 
 ## 🔑 Google Services Integration
 
-This assistant uses **6 Google Services**:
+This assistant uses **7 Google Services**:
 
 ### 1. Google Gemini 2.0 Flash API
 - Powers all interactive AI responses about the election process
