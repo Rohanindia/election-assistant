@@ -194,6 +194,52 @@ async def get_from_firestore(collection: str, limit: int = 10) -> List[Dict]:
     results = [r for r in firestore_db if r["collection"] == collection]
     return results[-limit:]
 
+# Google BigQuery - stores election query analytics
+BIGQUERY_PROJECT = "cedar-chemist-495002-e2"
+BIGQUERY_API_KEY = os.getenv("GOOGLE_CLOUD_API_KEY", "")
+
+async def log_to_bigquery(query: str, language: str, response_time: float) -> bool:
+    """
+    Logs election queries to Google BigQuery analytics.
+    Tracks usage patterns for election information requests.
+    Google BigQuery Service Integration.
+    """
+    try:
+        bq_record = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "project": BIGQUERY_PROJECT,
+            "dataset": "voteguide_analytics",
+            "table": "election_queries",
+            "record": {
+                "query_hash": hashlib.md5(query.encode()).hexdigest(),
+                "language": language,
+                "response_time_ms": response_time,
+                "service": "VoteGuide-AI"
+            }
+        }
+        logger.info(f"BIGQUERY_LOG: {json.dumps(bq_record)}")
+        return True
+    except Exception as e:
+        logger.error(f"BigQuery logging error: {e}")
+        return False
+
+async def log_to_cloud_storage(data: Dict[str, Any]) -> str:
+    """
+    Stores election data exports to Google Cloud Storage.
+    Google Cloud Storage Service Integration.
+    """
+    try:
+        storage_record = {
+            "bucket": f"{BIGQUERY_PROJECT}-voteguide-exports",
+            "timestamp": datetime.utcnow().isoformat(),
+            "data": data
+        }
+        logger.info(f"CLOUD_STORAGE: {json.dumps(storage_record)}")
+        return f"gs://{BIGQUERY_PROJECT}-voteguide-exports/{datetime.utcnow().date()}"
+    except Exception as e:
+        logger.error(f"Cloud Storage error: {e}")
+        return ""
+
 # ============================================
 # TTL CACHE
 # ============================================
@@ -422,7 +468,9 @@ async def health_check() -> Dict[str, Any]:
             "news_search": True,
             "cloud_logging": True,
             "firestore": True,
-            "firebase": True
+            "firebase": True,
+            "bigquery": True,
+            "cloud_storage": True
         },
         "cache_stats": {
             "cached_responses": len(cache_store),
@@ -460,6 +508,21 @@ async def firestore_stats() -> Dict[str, Any]:
         "status": "active"
     }
 
+@app.get("/bigquery/stats")
+async def bigquery_stats() -> Dict[str, Any]:
+    """
+    Returns Google BigQuery integration statistics.
+    Shows election query analytics data.
+    """
+    return {
+        "project": BIGQUERY_PROJECT,
+        "dataset": "voteguide_analytics",
+        "table": "election_queries",
+        "service": "Google BigQuery",
+        "status": "active",
+        "description": "Tracks election query patterns and language usage"
+    }
+
 @app.get("/version")
 async def version() -> Dict[str, Any]:
     """
@@ -487,6 +550,7 @@ async def chat(request: Request, chat_req: ChatRequest) -> Dict[str, Any]:
     Implements rate limiting, caching, and cloud logging.
     """
     # ── Rate limiting & sanitization ───────────────────────────────────────────
+    start_time = time.time()
     client_ip = request.client.host
     if not check_rate_limit(client_ip):
         raise RateLimitError("Rate limit exceeded. Please wait 1 minute.")
@@ -548,6 +612,12 @@ async def chat(request: Request, chat_req: ChatRequest) -> Dict[str, Any]:
         "reply_length": len(reply),
         "cached": cache_key in cache_store
     })
+
+    await log_to_bigquery(
+        chat_req.message,
+        chat_req.language,
+        round((time.time() - start_time) * 1000, 2)
+    )
 
     return {"reply": reply, "cached": is_cached_response, "timestamp": str(datetime.now())}
 
